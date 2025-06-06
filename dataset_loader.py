@@ -1,44 +1,65 @@
+# ===================== dataset_loader.py =====================
+import os
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-import cv2
-import numpy as np
-import os
-import glob
+from PIL import Image
 
 class CornellGraspDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
+    def __init__(self, root='./data/cornell', transform=None):
+        self.root = root
         self.transform = transform
-        self.image_files = sorted(glob.glob(os.path.join(root_dir, "*", "rgb.png")))
+        self.samples = self._load_dataset()
+
+    def _load_dataset(self):
+        samples = []
+        for obj_folder in sorted(os.listdir(self.root)):
+            obj_path = os.path.join(self.root, obj_folder)
+            if not os.path.isdir(obj_path):
+                continue
+            try:
+                rgb_path = os.path.join(obj_path, f"{obj_folder}_rgb.png")
+                depth_path = os.path.join(obj_path, f"{obj_folder}_dep.png")
+                grasp_path = os.path.join(obj_path, f"{obj_folder}_grasps.txt")
+                if os.path.exists(rgb_path) and os.path.exists(depth_path) and os.path.exists(grasp_path):
+                    samples.append((rgb_path, depth_path, grasp_path))
+            except Exception as e:
+                continue
+        print(f"Total samples loaded: {len(samples)}")
+        return samples
 
     def __len__(self):
-        return len(self.image_files)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        rgb_path = self.image_files[idx]
-        depth_path = rgb_path.replace("rgb.png", "depth.png")
+        rgb_path, depth_path, grasp_path = self.samples[idx]
 
-        rgb = cv2.imread(rgb_path)
-        depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+        rgb = Image.open(rgb_path).convert('RGB')
+        depth = Image.open(depth_path)
 
-        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-        rgb = cv2.resize(rgb, (480, 480))
-        depth = cv2.resize(depth, (480, 480))
+        rgb = np.asarray(rgb).astype(np.float32) / 255.0
+        depth = np.asarray(depth).astype(np.float32)
+        depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
 
-        depth = depth.astype(np.float32)
-        depth = (depth - np.min(depth)) / (np.max(depth) - np.min(depth))  # normalize
+        rgb = torch.from_numpy(rgb).permute(2, 0, 1)
+        depth = torch.from_numpy(depth).unsqueeze(0)
 
-        rgb = rgb.astype(np.float32) / 255.0
+        grasps = self._load_grasp_rectangles(grasp_path)
+        grasp_tensor = torch.tensor(grasps, dtype=torch.float32)
 
-        # Stack RGB + Depth as 4 channels
-        rgbd = np.dstack((rgb, depth))
-        rgbd = np.transpose(rgbd, (2, 0, 1))  # CxHxW
+        return {'rgb': rgb, 'depth': depth, 'grasps': grasp_tensor}
 
-        # Dummy labels: replace with actual loading of grasp rectangles here
-        # Format: [x_center, y_center, angle_radians, height, width]
-        label = np.array([240, 240, 0.0, 50, 50], dtype=np.float32)
-
-        rgbd = torch.tensor(rgbd, dtype=torch.float32)
-        label = torch.tensor(label, dtype=torch.float32)
-
-        return rgbd, label
+    def _load_grasp_rectangles(self, file_path):
+        grasps = []
+        try:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+                for i in range(0, len(lines), 4):
+                    rect = []
+                    for j in range(4):
+                        x, y = map(float, lines[i + j].strip().split())
+                        rect.append([x, y])
+                    grasps.append(rect)
+        except Exception as e:
+            pass
+        return grasps
