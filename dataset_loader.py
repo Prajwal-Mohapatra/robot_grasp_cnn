@@ -6,26 +6,35 @@ from torch.utils.data import Dataset
 from PIL import Image
 
 class CornellGraspDataset(Dataset):
-    def __init__(self, root='./data/cornell', transform=None):
+    def __init__(self, root='./data/cornell-grasp', transform=None):
         self.root = root
         self.transform = transform
         self.samples = self._load_dataset()
 
     def _load_dataset(self):
         samples = []
-        for obj_folder in sorted(os.listdir(self.root)):
-            obj_path = os.path.join(self.root, obj_folder)
-            if not os.path.isdir(obj_path):
+        for folder in sorted(os.listdir(self.root)):
+            folder_path = os.path.join(self.root, folder)
+            if not os.path.isdir(folder_path):
                 continue
-            try:
-                rgb_path = os.path.join(obj_path, f"{obj_folder}_rgb.png")
-                depth_path = os.path.join(obj_path, f"{obj_folder}_dep.png")
-                grasp_path = os.path.join(obj_path, f"{obj_folder}_grasps.txt")
-                if os.path.exists(rgb_path) and os.path.exists(depth_path) and os.path.exists(grasp_path):
-                    samples.append((rgb_path, depth_path, grasp_path))
-            except Exception as e:
-                continue
-        print(f"Total samples loaded: {len(samples)}")
+
+            for file in sorted(os.listdir(folder_path)):
+                if file.endswith('r.png'):  # RGB image
+                    base_name = file.replace('r.png', '')  # e.g., pcd0100
+                    rgb_path = os.path.join(folder_path, base_name + 'r.png')
+                    depth_path = os.path.join(folder_path, base_name + 'd.tiff')
+                    grasp_path = os.path.join(folder_path, base_name + 'cpos.txt')
+
+                    if os.path.exists(rgb_path) and os.path.exists(depth_path) and os.path.exists(grasp_path):
+                        grasps = self._load_grasp_rectangles(grasp_path)
+                        if len(grasps) > 0:
+                            samples.append((rgb_path, depth_path, grasp_path))
+                        else:
+                            print(f"⚠️ No valid grasps in {grasp_path}")
+                    else:
+                        print(f"⚠️ Missing files for base {base_name} in {folder}")
+
+        print(f"✅ Total valid samples loaded: {len(samples)}")
         return samples
 
     def __len__(self):
@@ -51,15 +60,19 @@ class CornellGraspDataset(Dataset):
 
     def _load_grasp_rectangles(self, file_path):
         grasps = []
-        try:
-            with open(file_path, 'r') as f:
-                lines = f.readlines()
-                for i in range(0, len(lines), 4):
-                    rect = []
-                    for j in range(4):
-                        x, y = map(float, lines[i + j].strip().split())
-                        rect.append([x, y])
-                    grasps.append(rect)
-        except Exception as e:
-            pass
+        rect = []
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                try:
+                    x, y = map(float, line.split())
+                    rect.append([x, y])
+                    if len(rect) == 4:
+                        grasps.append(rect)
+                        rect = []
+                except:
+                    continue
         return grasps
+
