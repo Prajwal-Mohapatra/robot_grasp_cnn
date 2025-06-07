@@ -39,12 +39,15 @@ for epoch in range(EPOCHS):
     for batch in train_loader:
         rgb = batch['rgb'].to(device)
         depth = batch['depth'].to(device)
-        grasps = batch['grasp']  # Still on CPU, list of Tensors
+        grasps = batch['grasp']  # list of [N_i, 4, 2]
 
-        pred = model(rgb, depth)  # shape depends on your model
+        pred = model(rgb, depth)  # [B, 4, 2]
 
-        # ⚠️ Replace this with actual target processing
-        target = torch.zeros_like(pred)  # Dummy placeholder
+        # Convert variable-length grasps into fixed-size targets
+        target = torch.stack([
+            g[0] if g.shape[0] > 0 else torch.zeros((4, 2))  # pick first grasp
+            for g in grasps
+        ]).to(device)  # [B, 4, 2]
 
         loss = criterion(pred, target)
         optimizer.zero_grad()
@@ -54,6 +57,7 @@ for epoch in range(EPOCHS):
         total_loss += loss.item()
 
     print(f"Epoch {epoch+1}/{EPOCHS}, Loss: {total_loss/len(train_loader):.4f}")
+
 
 # Save model
 os.makedirs("saved_models", exist_ok=True)
