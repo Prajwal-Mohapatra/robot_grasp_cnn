@@ -7,14 +7,22 @@ import torch.optim as optim
 import torch.nn as nn
 import os
 
+# custom_collate
+def custom_collate(batch):
+    return {
+        'rgb': torch.stack([item['rgb'] for item in batch]),
+        'depth': torch.stack([item['depth'] for item in batch]),
+        'grasp': [item['grasp'] for item in batch]  # Keep as list due to variable shape
+    }
+
 # Hyperparameters
 BATCH_SIZE = 8
 EPOCHS = 10
 LEARNING_RATE = 0.001
 
 # Dataset & Dataloader
-dataset = CornellGraspDataset(root='./data/cornell')
-train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+dataset = CornellGraspDataset(root='./data/cornell-grasp')
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, collate_fn=custom_collate)
 
 # Model, Loss, Optimizer
 model = GraspCNN()
@@ -26,18 +34,23 @@ for epoch in range(EPOCHS):
     model.train()
     total_loss = 0
     for batch in train_loader:
-        rgb = batch['rgb']
-        depth = batch['depth']
-        target = batch['grasps'][:, 0]  # Use only one grasp per sample
+      rgb = batch['rgb'].to(device)
+      depth = batch['depth'].to(device)
+      grasps = batch['grasp']  # Leave as list
 
-        pred = model(rgb, depth)
+      for i in range(len(grasps)):
+          g = grasps[i].to(device)  # Each g is shape [N_i, 4, 2]
+          # use `g` as needed per sample — adapt to your model
 
-        loss = criterion(pred, target)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
 
-        total_loss += loss.item()
+      pred = model(rgb, depth)
+
+      loss = criterion(pred, target)
+      optimizer.zero_grad()
+      loss.backward()
+      optimizer.step()
+
+      total_loss += loss.item()
 
     print(f"Epoch {epoch+1}/{EPOCHS}, Loss: {total_loss/len(train_loader):.4f}")
 
