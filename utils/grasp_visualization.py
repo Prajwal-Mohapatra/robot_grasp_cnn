@@ -13,4 +13,4 @@ sample = val_dataset[0]
 
 with torch.no_grad():
     pred = model(sample['rgb'].unsqueeze(0), sample['depth'].unsqueeze(0))
-    show_rgb_depth_grasps(sample['rgb'], sample['depth'], sample['grasps'], pred[0])
+    show_rgb_depth_grasps(sample['rgb'], sample['depth'], sample['grasp'], pred[0])
