@@ -50,13 +50,15 @@ class CornellGraspDataset(Dataset):
         depth = np.asarray(depth).astype(np.float32)
         depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
 
-        rgb = torch.from_numpy(rgb).permute(2, 0, 1)
-        depth = torch.from_numpy(depth).unsqueeze(0)
+        rgb = torch.from_numpy(rgb).permute(2, 0, 1)  # [C, H, W]
+        depth = torch.from_numpy(depth).unsqueeze(0)  # [1, H, W]
 
         grasps = self._load_grasp_rectangles(grasp_path)
-        grasp_tensor = torch.tensor(grasps, dtype=torch.float32)
+        if len(grasps) == 0:
+            return None  # To be filtered out in custom_collate
+        grasp_tensor = torch.tensor(grasps, dtype=torch.float32)  # [N, 4, 2]
 
-        return {'rgb': rgb, 'depth': depth, 'grasps': grasp_tensor}
+        return {'rgb': rgb, 'depth': depth, 'grasp': grasp_tensor}
 
     def _load_grasp_rectangles(self, file_path):
         grasps = []
@@ -75,4 +77,3 @@ class CornellGraspDataset(Dataset):
                 except:
                     continue
         return grasps
-
