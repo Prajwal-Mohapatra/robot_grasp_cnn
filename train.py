@@ -10,11 +10,27 @@ import matplotlib.pyplot as plt
 
 # custom_collate
 def custom_collate(batch):
+    batch = [item for item in batch if item is not None]
     return {
         'rgb': torch.stack([item['rgb'] for item in batch]),
         'depth': torch.stack([item['depth'] for item in batch]),
         'grasp': [item['grasp'] for item in batch]
     }
+
+# Function to get closest ground-truth grasp to the prediction
+def get_closest_grasp(pred, grasps):
+    batch_targets = []
+    for i in range(len(grasps)):
+        if grasps[i].shape[0] > 0:
+            gt = grasps[i].to(pred.device)  # [N, 4, 2]
+            pred_center = pred[i].mean(dim=0)  # [2]
+            gt_centers = gt.mean(dim=1)  # [N, 2]
+            dists = torch.norm(gt_centers - pred_center.unsqueeze(0), dim=1)
+            closest = gt[dists.argmin()]
+            batch_targets.append(closest)
+        else:
+            batch_targets.append(torch.zeros((4, 2), device=pred.device))
+    return torch.stack(batch_targets)
 
 # Hyperparameters
 BATCH_SIZE = 8
@@ -57,10 +73,7 @@ for epoch in range(EPOCHS):
         grasps = batch['grasp']
 
         pred = model(rgb, depth)
-
-        target = torch.stack([
-            g[0] if g.shape[0] > 0 else torch.zeros((4, 2)) for g in grasps
-        ]).to(device)
+        target = get_closest_grasp(pred, grasps).to(device)
 
         loss = criterion(pred, target)
         optimizer.zero_grad()
@@ -82,10 +95,7 @@ for epoch in range(EPOCHS):
             grasps = batch['grasp']
 
             pred = model(rgb, depth)
-
-            target = torch.stack([
-                g[0] if g.shape[0] > 0 else torch.zeros((4, 2)) for g in grasps
-            ]).to(device)
+            target = get_closest_grasp(pred, grasps).to(device)
 
             val_loss = criterion(pred, target)
             running_val_loss += val_loss.item()
