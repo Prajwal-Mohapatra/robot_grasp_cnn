@@ -6,26 +6,47 @@ import torch.nn.functional as F
 class GraspCNN(nn.Module):
     def __init__(self, input_size=(480, 640)):
         super(GraspCNN, self).__init__()
-        self.conv1 = nn.Conv2d(4, 32, 3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
 
-        # Dynamically compute flattened feature size
+        # Convolutional layers with batch norm and dropout
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(4, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout(0.1)
+        )
+
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout(0.1)
+        )
+
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout(0.2)
+        )
+
+        # Dynamically calculate flatten size
         dummy_input = torch.zeros(1, 4, *input_size)
         with torch.no_grad():
             x = self._forward_conv(dummy_input)
             self.flattened_size = x.view(1, -1).size(1)
 
+        # Fully connected layers
         self.fc1 = nn.Linear(self.flattened_size, 1024)
-        self.fc2 = nn.Linear(1024, 4 * 2)
+        self.dropout_fc = nn.Dropout(0.3)
+        self.fc2 = nn.Linear(1024, 4 * 2)  # 4 grasp points with (x, y)
 
     def _forward_conv(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2)
-        x = F.relu(self.conv3(x))
-        x = F.max_pool2d(x, 2)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
         return x
 
     def forward(self, rgb, depth):
@@ -33,5 +54,6 @@ class GraspCNN(nn.Module):
         x = self._forward_conv(x)
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
+        x = self.dropout_fc(x)
         x = self.fc2(x)
         return x.view(-1, 4, 2)
