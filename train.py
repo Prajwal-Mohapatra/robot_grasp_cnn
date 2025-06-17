@@ -29,7 +29,7 @@ train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, co
 
 # Model, Loss, Optimizer
 model = GraspCNN().to(device)
-criterion = nn.MSELoss()
+criterion = nn.SmoothL1Loss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 # Training Loop
