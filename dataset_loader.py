@@ -46,16 +46,29 @@ class CornellGraspDataset(Dataset):
         rgb = Image.open(rgb_path).convert('RGB')
         depth = Image.open(depth_path)
 
+        # Convert to numpy arrays
         rgb = np.asarray(rgb).astype(np.float32) / 255.0
         depth = np.asarray(depth).astype(np.float32)
         depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
 
-        rgb = torch.from_numpy(rgb).permute(2, 0, 1)  # [C, H, W]
+        # Convert to torch tensors
+        rgb = torch.from_numpy(rgb).permute(2, 0, 1)  # [3, H, W]
         depth = torch.from_numpy(depth).unsqueeze(0)  # [1, H, W]
 
+        # Normalize RGB using ImageNet stats
+        rgb_mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        rgb_std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+        rgb = (rgb - rgb_mean) / rgb_std
+
+        # Normalize depth to mean 0 and std 1
+        depth_mean = depth.mean()
+        depth_std = depth.std() + 1e-8
+        depth = (depth - depth_mean) / depth_std
+
+        # Load grasp rectangles
         grasps = self._load_grasp_rectangles(grasp_path)
         if len(grasps) == 0:
-            return None  # To be filtered out in custom_collate
+            return None  # skip if no valid grasps
         grasp_tensor = torch.tensor(grasps, dtype=torch.float32)  # [N, 4, 2]
 
         return {'rgb': rgb, 'depth': depth, 'grasp': grasp_tensor}
