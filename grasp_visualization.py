@@ -1,48 +1,31 @@
 # ===================== grasp_visualization.py =====================
-import os
-import random
 import torch
-import matplotlib.pyplot as plt
-import numpy as np
+import random
 from dataset_loader import CornellGraspDataset
 from model import GraspCNN
-from visualize import draw_grasp
-import torchvision.transforms.functional as TF
-from PIL import Image
-
-# Device setup
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from visualize import show_rgb_depth_grasps
+import os
 
 # Load model
-model = GraspCNN(output_dim=6).to(device)
-model.load_state_dict(torch.load('saved_models/grasp_cnn.pth', map_location=device))
+model = GraspCNN()
+model.load_state_dict(torch.load("saved_models/grasp_cnn.pth"))
 model.eval()
 
-# Load validation dataset
-dataset = CornellGraspDataset(split='val')
-num_samples = len(dataset)
-output_dir = "grasp_outputs"
-os.makedirs(output_dir, exist_ok=True)
+# Load dataset
+val_dataset = CornellGraspDataset(root="./data/cornell-grasp")
 
-# Pick 5 random indices
-random_indices = random.sample(range(num_samples), 5)
+# Directory to save outputs
+os.makedirs("grasp_outputs", exist_ok=True)
 
-for i, idx in enumerate(random_indices):
-    sample = dataset[idx]
-    rgb, depth = sample['rgb'].unsqueeze(0).to(device), sample['depth'].unsqueeze(0).to(device)
+# Number of random samples to visualize
+n_samples = 5
+
+for i in range(n_samples):
+    idx = random.randint(0, len(val_dataset) - 1)
+    sample = val_dataset[idx]
 
     with torch.no_grad():
-        output = model(rgb, depth)[0]  # shape: (6,)
-
-    # Convert RGB image to numpy for visualization
-    rgb_img = TF.to_pil_image(sample['rgb'])
-    rgb_np = np.array(rgb_img)
-
-    # Draw predicted grasp
-    grasp_img = draw_grasp(rgb_np, output)
-
-    # Save image
-    out_path = os.path.join(output_dir, f"grasp_sample_{idx}.png")
-    Image.fromarray(grasp_img).save(out_path)
-    print(f"✅ Saved grasp visualization to {out_path}")
-
+        pred = model(sample['rgb'].unsqueeze(0), sample['depth'].unsqueeze(0))
+        save_path = f"grasp_outputs/grasp_output_{i+1:03d}.png"
+        show_rgb_depth_grasps(sample['rgb'], sample['depth'], sample['grasp'], pred[0], save_path)
+        print(f"✅ Saved: {save_path}")
