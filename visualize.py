@@ -1,34 +1,44 @@
 # ===================== visualize.py =====================
-import matplotlib.pyplot as plt
 import numpy as np
+import cv2
 import torch
 
-def show_rgb_depth_grasps(rgb, depth, grasp=None, pred_grasp=None, save_path=None):
-    if isinstance(rgb, torch.Tensor):
-        rgb = rgb.permute(1, 2, 0).cpu().numpy()
-    rgb = np.clip(rgb, 0, 1)
+def draw_grasp(image, grasp, color=(0, 255, 0), thickness=2):
+    """
+    Draw a 6D grasp (x, y, theta, w, h, q) on an image.
+    - image: (H, W, 3) numpy array
+    - grasp: tensor or array of shape (6,)
+    """
+    if isinstance(grasp, torch.Tensor):
+        grasp = grasp.detach().cpu().numpy()
 
-    if isinstance(depth, torch.Tensor):
-        depth = depth.squeeze(0).cpu().numpy()
+    x, y, theta, w, h, q = grasp
+    theta_rad = np.deg2rad(theta)
 
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-    axs[0].imshow(rgb)
-    axs[0].set_title("RGB")
-    axs[1].imshow(depth, cmap='gray')
-    axs[1].set_title("Depth")
+    # Rotation matrix
+    R = np.array([
+        [np.cos(theta_rad), -np.sin(theta_rad)],
+        [np.sin(theta_rad),  np.cos(theta_rad)]
+    ])
 
-    if grasp is not None:
-        for g in grasp:
-            g = g.numpy()
-            g = np.vstack([g, g[0]])  # Close the grasp rectangle
-            axs[0].plot(g[:, 0], g[:, 1], 'g-')
+    # Rectangle corners (centered at origin before rotation)
+    dx = w / 2
+    dy = h / 2
+    corners = np.array([
+        [-dx, -dy],
+        [-dx,  dy],
+        [ dx,  dy],
+        [ dx, -dy]
+    ])
 
-    if pred_grasp is not None:
-        pred_grasp = pred_grasp.detach().cpu().numpy()
-        pred_grasp = np.vstack([pred_grasp, pred_grasp[0]])
-        axs[0].plot(pred_grasp[:, 0], pred_grasp[:, 1], 'r--')
+    # Rotate and shift to center (x, y)
+    rotated = (R @ corners.T).T
+    rotated[:, 0] += x
+    rotated[:, 1] += y
+    pts = rotated.astype(np.int32).reshape((-1, 1, 2))
 
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    plt.show()
+    # Draw rotated rectangle
+    img = image.copy()
+    cv2.polylines(img, [pts], isClosed=True, color=color, thickness=thickness)
+
+    return img
