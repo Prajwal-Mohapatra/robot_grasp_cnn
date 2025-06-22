@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader, random_split
 from dataset_loader import CornellGraspDataset
 from model import GraspCNN
 import torch.optim as optim
+from torchinfo import summary
 import torch.nn as nn
 import os
 import matplotlib.pyplot as plt
@@ -34,7 +35,7 @@ def get_closest_grasp(pred, grasps):
 
 # Hyperparameters
 BATCH_SIZE = 8
-EPOCHS = 10
+EPOCHS = 30
 LEARNING_RATE = 0.001
 STEP_SIZE = 5
 GAMMA = 0.5
@@ -54,7 +55,7 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, colla
 
 # Model, Loss, Optimizer, Scheduler
 model = GraspCNN().to(device)
-criterion = nn.SmoothL1Loss()
+criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
 
@@ -114,6 +115,9 @@ for epoch in range(EPOCHS):
 # Save model
 os.makedirs("saved_models", exist_ok=True)
 torch.save(model.state_dict(), "saved_models/grasp_cnn.pth")
+
+#Model Summary
+summary(model)
 
 # Plot Losses
 plt.figure(figsize=(10, 6))
