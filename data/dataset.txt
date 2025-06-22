@@ -1,0 +1,8 @@
+Use Cornell-Grasp Dataset available on Kaggle : https://www.kaggle.com/datasets/oneoneliu/cornell-grasp
+Use Kaggle API or download directly
+
+Procedure for Dataset collection using Kaggle API:
+# ======= Download Dataset =======
+!pip install opendatasets
+import opendatasets as od
+od.download("https://www.kaggle.com/datasets/oneoneliu/cornell-grasp")
