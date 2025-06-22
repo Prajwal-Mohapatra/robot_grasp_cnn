@@ -6,3 +6,4 @@ numpy>=1.21.0
 Pillow>=9.0.0
 tqdm>=4.60.0
 scikit-learn>=1.0.0
+torchinfo>=1.8.0
