@@ -17,16 +17,16 @@ def show_rgb_depth_grasps(rgb, depth, grasp=None, pred_grasp=None, save_path=Non
     axs[1].imshow(depth, cmap='gray')
     axs[1].set_title("Depth")
 
-    if grasp is not None:
+    if grasp is not None: #Ground truth
         for g in grasp:
             g = g.numpy()
             g = np.vstack([g, g[0]])  # Close the grasp rectangle
-            axs[0].plot(g[:, 0], g[:, 1], 'g-')
+            axs[0].plot(g[:, 0], g[:, 1], 'b-')
 
-    if pred_grasp is not None:
+    if pred_grasp is not None: #Prediction rectangle
         pred_grasp = pred_grasp.detach().cpu().numpy()
         pred_grasp = np.vstack([pred_grasp, pred_grasp[0]])
-        axs[0].plot(pred_grasp[:, 0], pred_grasp[:, 1], 'r--')
+        axs[0].plot(pred_grasp[:, 0], pred_grasp[:, 1], 'y-')
 
     plt.tight_layout()
     if save_path:
