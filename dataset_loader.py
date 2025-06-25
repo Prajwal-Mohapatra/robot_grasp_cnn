@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset
 from PIL import Image
 from sklearn.model_selection import train_test_split
+import torchvision.transforms as transforms
 
 class CornellGraspDataset(Dataset):
     def __init__(self, root='./data/cornell-grasp', split='train', transform=None, val_split=0.2, seed=42):
@@ -47,7 +48,8 @@ class CornellGraspDataset(Dataset):
                         else:
                             print(f"⚠️ No valid grasps in {grasp_path}")
                     else:
-                        print(f"⚠️ Missing files for base {base} in {folder}")
+                        #print(f"⚠️ Missing files for base {base} in {folder}")
+                        continue
 
         return samples
 
@@ -56,9 +58,15 @@ class CornellGraspDataset(Dataset):
 
     def __getitem__(self, idx):
         try:
+            resize_transform = transforms.Resize((224, 224))
             rgb_path, depth_path, grasp_path = self.samples[idx]
             rgb = Image.open(rgb_path).convert('RGB')
             depth = Image.open(depth_path)
+
+            # Resize both RGB and depth to 224×224
+            resize_transform = transforms.Resize((224, 224))
+            rgb = resize_transform(rgb)
+            depth = resize_transform(depth)
 
             rgb = np.asarray(rgb).astype(np.float32) / 255.0
             depth = np.asarray(depth).astype(np.float32)
