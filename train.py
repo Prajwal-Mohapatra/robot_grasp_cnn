@@ -1,6 +1,7 @@
 # ===================== train.py =====================
 import torch
 from torch.utils.data import DataLoader, random_split
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from dataset_loader import CornellGraspDataset
 from model import GraspCNN
 import torch.optim as optim
@@ -34,11 +35,11 @@ def get_closest_grasp(pred, grasps):
     return torch.stack(batch_targets)
 
 # Hyperparameters
-BATCH_SIZE = 8
+BATCH_SIZE = 10
 EPOCHS = 30
 LEARNING_RATE = 0.001
-STEP_SIZE = 5
-GAMMA = 0.5
+STEP_SIZE = 10
+GAMMA = 0.2
 VAL_SPLIT = 0.2
 
 # Device
@@ -55,9 +56,11 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, colla
 
 # Model, Loss, Optimizer, Scheduler
 model = GraspCNN().to(device)
-criterion = nn.MSELoss()
+#criterion = nn.MSELoss()
+criterion_mse = nn.MSELoss()
+criterion_smooth = nn.SmoothL1Loss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
+scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 # Tracking
 train_losses = []
@@ -76,7 +79,8 @@ for epoch in range(EPOCHS):
         pred = model(rgb, depth)
         target = get_closest_grasp(pred, grasps).to(device)
 
-        loss = criterion(pred, target)
+        #loss = criterion(pred, target)
+        loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -98,7 +102,8 @@ for epoch in range(EPOCHS):
             pred = model(rgb, depth)
             target = get_closest_grasp(pred, grasps).to(device)
 
-            val_loss = criterion(pred, target)
+            #val_loss = criterion(pred, target)
+            val_loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
             running_val_loss += val_loss.item()
 
     avg_val_loss = running_val_loss / len(val_loader)
