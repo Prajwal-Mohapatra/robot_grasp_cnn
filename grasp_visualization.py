@@ -27,5 +27,5 @@ for i in range(n_samples):
     with torch.no_grad():
         pred = model(sample['rgb'].unsqueeze(0), sample['depth'].unsqueeze(0))
         save_path = f"grasp_outputs/grasp_output_{i+1:03d}.png"
-        show_rgb_depth_grasps(sample['rgb'], sample['depth'], sample['grasp'], pred[0], save_path)
+        show_rgb_depth_grasps(sample['rgb'], sample['depth'], sample['grasp'], pred[0], save_path=save_path, original_size=(480, 640), resized_size=(224, 224))
         print(f"✅ Saved: {save_path}")
