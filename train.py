@@ -9,6 +9,7 @@ from torchinfo import summary
 import torch.nn as nn
 import os
 import matplotlib.pyplot as plt
+from shapely.geometry import Polygon
 
 # custom_collate
 def custom_collate(batch):
