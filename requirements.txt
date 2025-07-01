@@ -7,3 +7,4 @@ Pillow>=9.0.0
 tqdm>=4.60.0
 scikit-learn>=1.0.0
 torchinfo>=1.8.0
+shapely>=2.1.1
