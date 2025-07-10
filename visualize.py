@@ -26,6 +26,22 @@ def calculate_iou(rect1, rect2):
     except:
         return 0.0
 
+def safe_len(obj):
+    """Safely get length of object, handling tensors and lists"""
+    if obj is None:
+        return 0
+    elif torch.is_tensor(obj):
+        if obj.numel() == 0:
+            return 0
+        elif obj.dim() == 1:
+            return 1
+        else:
+            return obj.shape[0]
+    elif hasattr(obj, '__len__'):
+        return len(obj)
+    else:
+        return 0
+
 def show_rgb_depth_grasps(rgb, depth, pos_grasps=None, neg_grasps=None, pred_grasp=None, 
                           save_path=None, show_metrics=True):
     """
@@ -150,7 +166,7 @@ def show_rgb_depth_grasps(rgb, depth, pos_grasps=None, neg_grasps=None, pred_gra
                 f"Best Match: P{best_match_idx+1}" if best_match_idx >= 0 else "Best Match: None",
                 f"Success (IoU>0.25): {success_text}",
                 f"Pos Grasps: {len(pos_grasps)}",
-                f"Neg Grasps: {len(neg_grasps) if neg_grasps else 0}"
+                f"Neg Grasps: {safe_len(neg_grasps)}"
             ])
 
     # Add legend
@@ -208,8 +224,8 @@ def show_batch_predictions(model, dataset, device, n_samples=6, save_dir="grasp_
             depth_vis = (depth_vis - depth_vis.min()) / (depth_vis.max() - depth_vis.min() + 1e-8)
             
             # Extract grasps
-            pos_grasps = sample['pos_grasps'] if len(sample['pos_grasps']) > 0 else None
-            neg_grasps = sample['neg_grasps'] if len(sample['neg_grasps']) > 0 else None
+            pos_grasps = sample['pos_grasps'] if safe_len(sample['pos_grasps']) > 0 else None
+            neg_grasps = sample['neg_grasps'] if safe_len(sample['neg_grasps']) > 0 else None
             pred_grasp = pred[0]
             
             # Create save path
