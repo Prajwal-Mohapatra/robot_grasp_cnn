@@ -55,7 +55,7 @@ def get_best_grasp_target(pred, pos_grasps, neg_grasps):
     for i in range(len(pos_grasps)):
         pos = pos_grasps[i]
         neg = neg_grasps[i]
-        pred_rect = pred[i].cpu().numpy()
+        pred_rect = pred[i].detach().cpu().numpy()
         
         best_iou = 0.0
         best_grasp = None
@@ -63,7 +63,7 @@ def get_best_grasp_target(pred, pos_grasps, neg_grasps):
         # Find best positive grasp
         if len(pos) > 0:
             for pos_grasp in pos:
-                iou = calculate_iou(pred_rect, pos_grasp.cpu().numpy())
+                iou = calculate_iou(pred_rect, pos_grasp.detach().cpu().numpy())
                 if iou > best_iou:
                     best_iou = iou
                     best_grasp = pos_grasp
@@ -71,7 +71,7 @@ def get_best_grasp_target(pred, pos_grasps, neg_grasps):
         # If no good positive grasp found, use the first positive grasp
         if best_grasp is None and len(pos) > 0:
             best_grasp = pos[0]
-            best_iou = calculate_iou(pred_rect, best_grasp.cpu().numpy())
+            best_iou = calculate_iou(pred_rect, best_grasp.detach().cpu().numpy())
         
         # If still no grasp, create a zero grasp
         if best_grasp is None:
@@ -90,13 +90,13 @@ def calculate_grasp_success_rate(pred, pos_grasps, neg_grasps, iou_threshold=0.2
     
     for i in range(len(pos_grasps)):
         pos = pos_grasps[i]
-        pred_rect = pred[i].cpu().numpy()
+        pred_rect = pred[i].detach().cpu().numpy()
         
         # Check if prediction overlaps with any positive grasp
         max_iou = 0.0
         if len(pos) > 0:
             for pos_grasp in pos:
-                iou = calculate_iou(pred_rect, pos_grasp.cpu().numpy())
+                iou = calculate_iou(pred_rect, pos_grasp.detach().cpu().numpy())
                 max_iou = max(max_iou, iou)
         
         if max_iou >= iou_threshold:
@@ -107,7 +107,7 @@ def calculate_grasp_success_rate(pred, pos_grasps, neg_grasps, iou_threshold=0.2
 
 # Hyperparameters
 BATCH_SIZE = 8  # Reduced for stability
-EPOCHS = 30
+EPOCHS = 50
 LEARNING_RATE = 0.001
 STEP_SIZE = 10
 GAMMA = 0.2
