@@ -1,7 +1,8 @@
 # ===================== grasp_visualization.py =====================
 import torch
 import random
-from dataset_loader import CornellGraspDataset
+# from dataset_loader import CornellGraspDataset
+from loader import CornellGraspDataset
 from model import GraspCNN
 from visualize import show_rgb_depth_grasps, show_batch_predictions, evaluate_model_performance
 import os
