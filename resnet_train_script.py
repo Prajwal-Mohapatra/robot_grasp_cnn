@@ -2,7 +2,8 @@
 import torch
 from torch.utils.data import DataLoader, random_split
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
-from dataset_loader import CornellGraspDataset
+#from dataset_loader import CornellGraspDataset
+from loader import CornellGraspDataset
 from model import create_grasp_model, grasp_params_to_rectangle, rectangle_to_grasp_params
 import torch.optim as optim
 from torchinfo import summary
