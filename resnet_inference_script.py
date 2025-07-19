@@ -8,7 +8,8 @@ import cv2
 from PIL import Image
 import os
 from model import create_grasp_model, grasp_params_to_rectangle
-from dataset_loader import CornellGraspDataset
+#from dataset_loader import CornellGraspDataset
+from loader import CornellGraspDataset
 
 def load_trained_model(model_path, model_type='resnet34', device='cuda'):
     """Load trained model from checkpoint"""
