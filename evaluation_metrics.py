@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 from shapely.geometry import Polygon
 from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
-from dataset_loader import CornellGraspDataset
+# from dataset_loader import CornellGraspDataset
+from loader import CornellGraspDataset
 from model import GraspCNN
 import os
 import json
