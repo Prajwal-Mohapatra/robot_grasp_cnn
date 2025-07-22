@@ -13,8 +13,6 @@ class CornellGraspDataset(Dataset):
         self.transform = transform
         self.val_split = val_split
         self.seed = seed
-        self.original_size = (480, 640)  # (height, width)
-        self.target_size = (224, 224)
 
         # Load all valid samples
         all_samples = self._load_dataset()
@@ -41,18 +39,16 @@ class CornellGraspDataset(Dataset):
                     base = file.replace('r.png', '')
                     rgb_path = os.path.join(folder_path, base + 'r.png')
                     depth_path = os.path.join(folder_path, base + 'd.tiff')
-                    pos_grasp_path = os.path.join(folder_path, base + 'cpos.txt')
-                    neg_grasp_path = os.path.join(folder_path, base + 'cneg.txt')
+                    grasp_path = os.path.join(folder_path, base + 'cpos.txt')
 
-                    if os.path.exists(rgb_path) and os.path.exists(depth_path) and os.path.exists(pos_grasp_path):
-                        pos_grasps = self._load_grasp_rectangles(pos_grasp_path)
-                        neg_grasps = self._load_grasp_rectangles(neg_grasp_path) if os.path.exists(neg_grasp_path) else []
-                        
-                        if len(pos_grasps) > 0:
-                            samples.append((rgb_path, depth_path, pos_grasps, neg_grasps))
+                    if os.path.exists(rgb_path) and os.path.exists(depth_path) and os.path.exists(grasp_path):
+                        grasps = self._load_grasp_rectangles(grasp_path)
+                        if len(grasps) > 0:
+                            samples.append((rgb_path, depth_path, grasp_path))
                         else:
-                            print(f"⚠️ No valid positive grasps in {pos_grasp_path}")
+                            print(f"⚠️ No valid grasps in {grasp_path}")
                     else:
+                        #print(f"⚠️ Missing files for base {base} in {folder}")
                         continue
 
         return samples
@@ -62,23 +58,20 @@ class CornellGraspDataset(Dataset):
 
     def __getitem__(self, idx):
         try:
-            rgb_path, depth_path, pos_grasps, neg_grasps = self.samples[idx]
-            
-            # Load images
+            resize_transform = transforms.Resize((224, 224))
+            rgb_path, depth_path, grasp_path = self.samples[idx]
             rgb = Image.open(rgb_path).convert('RGB')
             depth = Image.open(depth_path)
 
             # Resize both RGB and depth to 224×224
-            resize_transform = transforms.Resize(self.target_size)
+            resize_transform = transforms.Resize((224, 224))
             rgb = resize_transform(rgb)
             depth = resize_transform(depth)
 
-            # Convert to arrays
             rgb = np.asarray(rgb).astype(np.float32) / 255.0
             depth = np.asarray(depth).astype(np.float32)
             depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
 
-            # Convert to tensors
             rgb = torch.from_numpy(rgb).permute(2, 0, 1)
             depth = torch.from_numpy(depth).unsqueeze(0)
 
@@ -90,47 +83,18 @@ class CornellGraspDataset(Dataset):
             # Normalize depth
             depth = (depth - depth.mean()) / (depth.std() + 1e-8)
 
-            # Scale grasp coordinates from original to target size
-            scaled_pos_grasps = self._scale_grasps(pos_grasps)
-            scaled_neg_grasps = self._scale_grasps(neg_grasps)
+            grasps = self._load_grasp_rectangles(grasp_path)
+            if len(grasps) == 0:
+                return None
 
-            # Convert to tensors
-            pos_grasp_tensor = torch.tensor(scaled_pos_grasps, dtype=torch.float32) if scaled_pos_grasps else torch.empty(0, 4, 2)
-            neg_grasp_tensor = torch.tensor(scaled_neg_grasps, dtype=torch.float32) if scaled_neg_grasps else torch.empty(0, 4, 2)
-
-            return {
-                'rgb': rgb, 
-                'depth': depth, 
-                'pos_grasps': pos_grasp_tensor,
-                'neg_grasps': neg_grasp_tensor
-            }
+            grasp_tensor = torch.tensor(grasps, dtype=torch.float32)  # [N, 4, 2]
+            return {'rgb': rgb, 'depth': depth, 'grasp': grasp_tensor}
 
         except Exception as e:
             print(f"❌ Error loading index {idx}: {e}")
             return None
 
-    def _scale_grasps(self, grasps):
-        """Scale grasp coordinates from original image size to target size"""
-        if not grasps:
-            return []
-        
-        scaled_grasps = []
-        h_scale = self.target_size[0] / self.original_size[0]  # 224/480
-        w_scale = self.target_size[1] / self.original_size[1]  # 224/640
-        
-        for grasp in grasps:
-            scaled_grasp = []
-            for point in grasp:
-                x, y = point
-                scaled_x = x * w_scale
-                scaled_y = y * h_scale
-                scaled_grasp.append([scaled_x, scaled_y])
-            scaled_grasps.append(scaled_grasp)
-        
-        return scaled_grasps
-
     def _load_grasp_rectangles(self, file_path):
-        """Load grasp rectangles from file"""
         grasps = []
         rect = []
         try:
@@ -142,22 +106,8 @@ class CornellGraspDataset(Dataset):
                     x, y = map(float, line.split())
                     rect.append([x, y])
                     if len(rect) == 4:
-                        if self._is_valid_rectangle(rect):
-                            grasps.append(rect)
+                        grasps.append(rect)
                         rect = []
         except Exception as e:
             print(f"⚠️ Error reading grasp file {file_path}: {e}")
         return grasps
-
-    def _is_valid_rectangle(self, rect):
-        """Basic validation for grasp rectangle"""
-        if len(rect) != 4:
-            return False
-        
-        # Check if all points are within image bounds
-        for point in rect:
-            x, y = point
-            if x < 0 or x >= self.original_size[1] or y < 0 or y >= self.original_size[0]:
-                return False
-        
-        return True
