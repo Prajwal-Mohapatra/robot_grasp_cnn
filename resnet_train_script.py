@@ -389,5 +389,5 @@ final_metrics = [
     f"Final Val Success: {val_success_rates[-1]:.4f}",
     f"Best Val Success: {max(val_success_rates):.4f}",
     f"IoU Threshold: {IOU_THRESHOLD}",
-    f"Parameters: {model_info['total_parameters']:,}",
-    f"Model
+    f"Parameters: {model_info['total_parameters']:,}"
+]
