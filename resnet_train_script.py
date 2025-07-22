@@ -225,7 +225,7 @@ lrs = []
 
 print("Starting training...")
 print(f"Model: {MODEL_TYPE}")
-print(f"Dataset size: {len(full_dataset)} (Train: {train_size}, Val: {val_size})")
+#print(f"Dataset size: {len(full_dataset)} (Train: {train_size}, Val: {val_size})")
 
 # Training Loop
 for epoch in range(EPOCHS):
