@@ -197,13 +197,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Dataset & DataLoader
-full_dataset = CornellGraspDataset(root='./data/cornell-grasp')
-val_size = int(len(full_dataset) * VAL_SPLIT)
-train_size = len(full_dataset) - val_size
-train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+# Create separate train and validation datasets
+train_dataset = CornellGraspDataset(root='./data/cornell-grasp', split='train', val_split=VAL_SPLIT)
+val_dataset = CornellGraspDataset(root='./data/cornell-grasp', split='val', val_split=VAL_SPLIT)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=custom_collate)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=custom_collate)
+
+print(f"Train dataset size: {len(train_dataset)}")
+print(f"Val dataset size: {len(val_dataset)}")
+print(f"Train batches: {len(train_loader)}")
+print(f"Val batches: {len(val_loader)}")
+
 
 # Model, Loss, Optimizer, Scheduler
 model = create_grasp_model(MODEL_TYPE, pretrained=True).to(device)
