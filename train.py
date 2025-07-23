@@ -134,15 +134,30 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, colla
 
 # Model, Loss, Optimizer, Scheduler
 model = GraspCNN().to(device)
+# In train.py, after model = GraspCNN().to(device)
+# Freeze the first few layers of the ResNet backbone
+ct = 0
+for child in model.features.children():
+    ct += 1
+    # Freeze conv1, bn1, relu, maxpool, layer1, and layer2
+    if ct < 7: 
+        for param in child.parameters():
+            param.requires_grad = False
+print(f"✅ Frozen first {ct-1} layers of the ResNet backbone.")
 criterion_mse = nn.MSELoss()
 criterion_smooth = nn.SmoothL1Loss()
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 # Tracking
 train_losses = []
 val_losses = []
 lrs = []
+
+# In train.py, before the training loop
+patience = 5  # Number of epochs to wait for improvement
+epochs_no_improve = 0
+min_val_loss = float('inf')
 
 # Training Loop
 for epoch in range(EPOCHS):
@@ -154,8 +169,8 @@ for epoch in range(EPOCHS):
         grasps = batch['grasp']
         pred = model(rgb, depth)
         target = get_closest_grasp(pred, grasps).to(device)
-        #loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
-        loss = criterion_mse(pred, target)
+        loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
+        #loss = criterion_mse(pred, target)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -173,8 +188,8 @@ for epoch in range(EPOCHS):
             grasps = batch['grasp']
             pred = model(rgb, depth)
             target = get_closest_grasp(pred, grasps).to(device)
-            #val_loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
-            val_loss = criterion_mse(pred, target)
+            val_loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
+            #val_loss = criterion_mse(pred, target)
             running_val_loss += val_loss.item()
     avg_val_loss = running_val_loss / len(val_loader)
     val_losses.append(avg_val_loss)
@@ -183,19 +198,35 @@ for epoch in range(EPOCHS):
           f"Train Loss: {avg_train_loss:.4f}, "
           f"Val Loss: {avg_val_loss:.4f}, "
           f"LR: {lrs[-1]:.6f}")
+    # --- ADD THE EARLY STOPPING LOGIC HERE ---
+    if avg_val_loss < min_val_loss:
+        min_val_loss = avg_val_loss
+        epochs_no_improve = 0
+        # Save the model with the best validation loss
+        torch.save(model.state_dict(), "outputs/saved_models/grasp_cnn_best.pth")
+        print("✅ Validation loss decreased. Saving best model.")
+    else:
+        epochs_no_improve += 1
+
+    if epochs_no_improve >= patience:
+        print(f"⚠️  Early stopping triggered after {patience} epochs with no improvement.")
+        break
+    # --- END OF NEW LOGIC ---
     scheduler.step()
 
 # Save model
 os.makedirs("outputs/saved_models", exist_ok=True)
-torch.save(model.state_dict(), "outputs/saved_models/grasp_cnn.pth")
+#torch.save(model.state_dict(), "outputs/saved_models/grasp_cnn.pth")
 
 #Model Summary
 summary(model)
 
 # Plot Losses
+actual_epochs = len(train_losses)
+
 plt.figure(figsize=(10, 6))
-plt.plot(range(1, EPOCHS + 1), train_losses, 'b-o', label='Training Loss')
-plt.plot(range(1, EPOCHS + 1), val_losses, 'r-s', label='Validation Loss')
+plt.plot(range(1, actual_epochs + 1), train_losses, 'b-o', label='Training Loss')
+plt.plot(range(1, actual_epochs + 1), val_losses, 'r-s', label='Validation Loss')
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
 plt.title('Training vs Validation Loss')
