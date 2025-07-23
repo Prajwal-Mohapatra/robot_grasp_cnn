@@ -8,7 +8,7 @@ import os
 
 # Load model
 model = GraspCNN()
-model.load_state_dict(torch.load("outputs/saved_models/grasp_cnn.pth"))
+model.load_state_dict(torch.load("outputs/saved_models/grasp_cnn_best.pth"))
 model.eval()
 
 # Load dataset
