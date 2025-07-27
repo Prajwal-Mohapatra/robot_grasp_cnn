@@ -1,237 +1,149 @@
 # ===================== train.py =====================
 import torch
-from torch.utils.data import DataLoader, random_split
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from dataset_loader import CornellGraspDataset
-from model import GraspCNN
-import torch.optim as optim
-from torchinfo import summary
 import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+import numpy as np
 import os
 import matplotlib.pyplot as plt
-from shapely.geometry import Polygon
-import math
-import numpy as np
+import csv # For logging
 
-# custom_collate
+from loader import CornellGraspDataset
+from model import GraspCNN
+
+# --- Helper Functions ---
 def custom_collate(batch):
-    batch = [item for item in batch if item is not None]
-    return {
-        'rgb': torch.stack([item['rgb'] for item in batch]),
-        'depth': torch.stack([item['depth'] for item in batch]),
-        'grasp': [item['grasp'] for item in batch]
-    }
+    batch = [item for item in batch if item is not None and item['pos_grasps'].shape[0] > 0]
+    if not batch: return None
+    return {'rgb': torch.stack([item['rgb'] for item in batch]),
+            'depth': torch.stack([item['depth'] for item in batch]),
+            'pos_grasps': [item['pos_grasps'] for item in batch]}
 
-# Function to get closest ground-truth grasp to the prediction
+def get_target_vector(rect, image_size):
+    center = rect.mean(axis=0)
+    dx, dy = rect[1] - rect[0], rect[2] - rect[1]
+    width, height = np.linalg.norm(dx), np.linalg.norm(dy)
+    angle = np.arctan2(dx[1], dx[0])
+    return np.array([center[0] / image_size, center[1] / image_size,
+                     np.sin(2 * angle), np.cos(2 * angle),
+                     width / image_size, height / image_size])
 
-def rect_from_grasp_param(grasp):
-    x, y, theta, w, h, _ = grasp.detach().cpu().numpy()
-    x *= 224
-    y *= 224
-    w *= 224
-    h *= 224
-    theta *= np.pi
-    dx = (w / 2) * math.cos(theta)
-    dy = (w / 2) * math.sin(theta)
-    hx = (h / 2) * math.sin(theta)
-    hy = (h / 2) * -math.cos(theta)
-    p1 = [x - dx - hx, y - dy - hy]
-    p2 = [x + dx - hx, y + dy - hy]
-    p3 = [x + dx + hx, y + dy + hy]
-    p4 = [x - dx + hx, y - dy + hy]
-    return np.array([p1, p2, p3, p4])
-
-def polygon_from_rect(rect):
-    rect_np = rect.detach().cpu().numpy()
-    if rect_np.shape == (6,):
-        rect_np = rect_from_grasp_param(rect)
-    if rect_np.shape != (4, 2):
-        raise ValueError(f"Invalid rect shape for polygon: got {rect_np.shape}, expected (4, 2)")
-    return Polygon(rect_np)
-
-def compute_iou(poly1, poly2):
-    if not poly1.is_valid or not poly2.is_valid:
-        return 0.0
-    inter = poly1.intersection(poly2).area
-    union = poly1.union(poly2).area
-    return inter / union if union > 0 else 0.0
-
-def compute_angle(rect):
-    if rect.shape != (4, 2):
-        print(f"[Warning] compute_angle received invalid rect shape: {rect.shape}")
-        return torch.tensor(0.0, device=rect.device)
-    dx = rect[1] - rect[0]
-    return torch.atan2(dx[1], dx[0]) / torch.pi
-
-def get_closest_grasp(pred, grasps):
-    """
-    Find the closest ground truth grasp to each predicted grasp vector using L2 distance.
-    Assumes pred is [B, 6] and grasps is list of list-of-[4, 2] tensors or [6] tensors.
-    """
+def get_closest_grasp_target(pred, grasps_batch, image_size):
     batch_targets = []
+    for i in range(pred.shape[0]):
+        gt_rects = grasps_batch[i].cpu().numpy()
+        pred_vec_np = pred[i].detach().cpu().numpy()
+        gt_targets = np.array([get_target_vector(g, image_size) for g in gt_rects])
+        dists = np.linalg.norm(gt_targets - pred_vec_np, axis=1)
+        best_gt_target = gt_targets[dists.argmin()]
+        batch_targets.append(best_gt_target)
+    return torch.tensor(np.array(batch_targets), dtype=torch.float32, device=pred.device)
 
-    for i in range(len(grasps)):
-        gt_rects = grasps[i]
-        if len(gt_rects) == 0:
-            batch_targets.append(torch.zeros(6, device=pred.device))
-            continue
+def weighted_loss(pred, target):
+    loss_fn = nn.MSELoss(reduction='none')
+    loss = loss_fn(pred, target)
+    weights = torch.tensor([1.5, 1.5, 2.0, 2.0, 1.0, 1.0], device=pred.device)
+    return (loss * weights).mean()
 
-        # Convert all ground truth grasps to vector format [6]
-        gt_vecs = []
-        for g in gt_rects:
-            if g.shape == (4, 2):  # Convert rectangle to vector
-                g = g.to(pred.device)
-                center = g.mean(dim=0)
-                dx = g[1] - g[0]
-                dy = g[2] - g[1]
-                width = torch.norm(dx)
-                height = torch.norm(dy)
-                theta = torch.atan2(dx[1], dx[0]) / torch.pi  # Normalize
-                grasp_vec = torch.tensor([
-                    center[0] / 224,
-                    center[1] / 224,
-                    theta,
-                    width / 224,
-                    height / 224,
-                    1.0
-                ], device=pred.device)
-                gt_vecs.append(grasp_vec)
-            elif g.shape == (6,):
-                gt_vecs.append(g.to(pred.device))
+# --- Main Training Script ---
+def train_model():
+    # Hyperparameters
+    IMAGE_SIZE = 300
+    BATCH_SIZE = 32
+    INITIAL_LR = 5e-4 # Lowered initial LR for more stable training
+    FINETUNE_LR = 5e-6
+    EPOCHS_FROZEN = 50 # Increased epochs for more learning
+    EPOCHS_FINETUNE = 30
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    train_dataset = CornellGraspDataset(split='train')
+    val_dataset = CornellGraspDataset(split='val')
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=custom_collate, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=custom_collate, num_workers=2)
+    
+    model = GraspCNN().to(device)
+    
+    # Setup CSV Logger
+    log_path = "outputs/training_log.csv"
+    os.makedirs("outputs", exist_ok=True)
+    log_file = open(log_path, 'w', newline='')
+    log_writer = csv.writer(log_file)
+    log_writer.writerow(['epoch', 'phase', 'loss', 'lr'])
+    
+    history = {'train_loss': [], 'val_loss': []}
+    
+    # Stage 1: Train Regressor Head
+    print("--- Stage 1: Training Regressor Head ---")
+    for param in model.features.parameters():
+        param.requires_grad = False
+    optimizer = optim.AdamW(model.regressor.parameters(), lr=INITIAL_LR) # Using AdamW
+    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+    
+    for epoch in range(EPOCHS_FROZEN):
+        run_epoch(epoch, 'train', model, train_loader, optimizer, device, history, log_writer, IMAGE_SIZE, EPOCHS_FROZEN)
+        run_epoch(epoch, 'val', model, val_loader, optimizer, device, history, log_writer, IMAGE_SIZE, EPOCHS_FROZEN, scheduler)
 
-        if len(gt_vecs) == 0:
-            batch_targets.append(torch.zeros(6, device=pred.device))
-            continue
+    # Stage 2: Fine-tune Full Model
+    print("\n--- Stage 2: Fine-tuning Full Model ---")
+    for param in model.parameters():
+        param.requires_grad = True
+    optimizer = optim.AdamW(model.parameters(), lr=FINETUNE_LR) # Using AdamW
+    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+    
+    for epoch in range(EPOCHS_FINETUNE):
+        full_epoch = EPOCHS_FROZEN + epoch
+        run_epoch(full_epoch, 'train', model, train_loader, optimizer, device, history, log_writer, IMAGE_SIZE, EPOCHS_FROZEN + EPOCHS_FINETUNE)
+        run_epoch(full_epoch, 'val', model, val_loader, optimizer, device, history, log_writer, IMAGE_SIZE, EPOCHS_FROZEN + EPOCHS_FINETUNE, scheduler)
 
-        gt_stack = torch.stack(gt_vecs)  # [N, 6]
-        pred_vec = pred[i]  # [6]
+    log_file.close()
+    plot_history(history)
+    torch.save(model.state_dict(), "outputs/saved_models/grasp_cnn_final_v2.pth")
+    print("✅ Final model saved.")
 
-        dists = torch.norm(gt_stack - pred_vec.unsqueeze(0), dim=1)  # [N]
-        closest = gt_stack[dists.argmin()]
-        batch_targets.append(closest)
-
-    return torch.stack(batch_targets)  # [B, 6]
-
-
-# Hyperparameters
-BATCH_SIZE = 16
-EPOCHS = 30
-LEARNING_RATE = 0.001
-STEP_SIZE = 10
-GAMMA = 0.5
-VAL_SPLIT = 0.2
-
-# Device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Dataset & DataLoader
-full_dataset = CornellGraspDataset(root='./data/cornell-grasp')
-val_size = int(len(full_dataset) * VAL_SPLIT)
-train_size = len(full_dataset) - val_size
-train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=custom_collate)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=custom_collate)
-
-# Model, Loss, Optimizer, Scheduler
-model = GraspCNN().to(device)
-# In train.py, after model = GraspCNN().to(device)
-# Freeze the first few layers of the ResNet backbone
-ct = 0
-for child in model.features.children():
-    ct += 1
-    # Freeze conv1, bn1, relu, maxpool, layer1, and layer2
-    if ct < 7: 
-        for param in child.parameters():
-            param.requires_grad = False
-print(f"✅ Frozen first {ct-1} layers of the ResNet backbone.")
-criterion_mse = nn.MSELoss()
-criterion_smooth = nn.SmoothL1Loss()
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
-scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
-
-# Tracking
-train_losses = []
-val_losses = []
-lrs = []
-
-# In train.py, before the training loop
-patience = 5  # Number of epochs to wait for improvement
-epochs_no_improve = 0
-min_val_loss = float('inf')
-
-# Training Loop
-for epoch in range(EPOCHS):
-    model.train()
-    running_train_loss = 0
-    for batch in train_loader:
-        rgb = batch['rgb'].to(device)
-        depth = batch['depth'].to(device)
-        grasps = batch['grasp']
-        pred = model(rgb, depth)
-        target = get_closest_grasp(pred, grasps).to(device)
-        loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
-        #loss = criterion_mse(pred, target)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        running_train_loss += loss.item()
-    avg_train_loss = running_train_loss / len(train_loader)
-    train_losses.append(avg_train_loss)
-
-    # Validation Loop
-    model.eval()
-    running_val_loss = 0
-    with torch.no_grad():
-        for batch in val_loader:
-            rgb = batch['rgb'].to(device)
-            depth = batch['depth'].to(device)
-            grasps = batch['grasp']
+def run_epoch(epoch, phase, model, loader, optimizer, device, history, log_writer, image_size, total_epochs, scheduler=None):
+    is_train = phase == 'train'
+    model.train() if is_train else model.eval()
+    
+    running_loss, total_samples = 0.0, 0
+    
+    for batch in loader:
+        if batch is None: continue
+        rgb, depth, grasps = batch['rgb'].to(device), batch['depth'].to(device), batch['pos_grasps']
+        
+        with torch.set_grad_enabled(is_train):
             pred = model(rgb, depth)
-            target = get_closest_grasp(pred, grasps).to(device)
-            val_loss = 0.7 * criterion_mse(pred, target) + 0.3 * criterion_smooth(pred, target)
-            #val_loss = criterion_mse(pred, target)
-            running_val_loss += val_loss.item()
-    avg_val_loss = running_val_loss / len(val_loader)
-    val_losses.append(avg_val_loss)
-    lrs.append(optimizer.param_groups[0]['lr'])
-    print(f"Epoch {epoch+1}/{EPOCHS}, "
-          f"Train Loss: {avg_train_loss:.4f}, "
-          f"Val Loss: {avg_val_loss:.4f}, "
-          f"LR: {lrs[-1]:.6f}")
-    # --- ADD THE EARLY STOPPING LOGIC HERE ---
-    if avg_val_loss < min_val_loss:
-        min_val_loss = avg_val_loss
-        epochs_no_improve = 0
-        # Save the model with the best validation loss
-        torch.save(model.state_dict(), "outputs/saved_models/grasp_cnn_best.pth")
-        print("✅ Validation loss decreased. Saving best model.")
+            target = get_closest_grasp_target(pred, grasps, image_size)
+            loss = weighted_loss(pred, target)
+            if is_train:
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+        running_loss += loss.item() * rgb.size(0)
+        total_samples += rgb.size(0)
+        
+    epoch_loss = running_loss / total_samples if total_samples > 0 else 0
+    lr = optimizer.param_groups[0]['lr']
+    history[f'{phase}_loss'].append(epoch_loss)
+    log_writer.writerow([epoch + 1, phase, epoch_loss, lr])
+    
+    if is_train:
+        print(f"Epoch {epoch + 1}/{total_epochs}: Train Loss: {epoch_loss:.6f}", end=' | ')
     else:
-        epochs_no_improve += 1
+        print(f"Val Loss: {epoch_loss:.6f}")
+        if scheduler: scheduler.step(epoch_loss)
 
-    if epochs_no_improve >= patience:
-        print(f"⚠️  Early stopping triggered after {patience} epochs with no improvement.")
-        break
-    # --- END OF NEW LOGIC ---
-    scheduler.step()
+def plot_history(history):
+    plt.figure(figsize=(12, 5))
+    plt.plot(history['train_loss'], label='Training Loss')
+    plt.plot(history['val_loss'], label='Validation Loss')
+    plt.title('Training and Validation Loss Over Time')
+    plt.xlabel('Epochs'); plt.ylabel('Loss'); plt.legend(); plt.grid(True)
+    plt.savefig("outputs/loss_curve_final_v2.png")
+    plt.show()
 
-# Save model
-os.makedirs("outputs/saved_models", exist_ok=True)
-#torch.save(model.state_dict(), "outputs/saved_models/grasp_cnn.pth")
-
-#Model Summary
-summary(model)
-
-# Plot Losses
-actual_epochs = len(train_losses)
-
-plt.figure(figsize=(10, 6))
-plt.plot(range(1, actual_epochs + 1), train_losses, 'b-o', label='Training Loss')
-plt.plot(range(1, actual_epochs + 1), val_losses, 'r-s', label='Validation Loss')
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
-plt.title('Training vs Validation Loss')
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.savefig("outputs/loss_curve.png")
-plt.show()
+if __name__ == '__main__':
+    os.makedirs("outputs/saved_models", exist_ok=True)
+    train_model()
