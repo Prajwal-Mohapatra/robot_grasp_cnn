@@ -1,94 +1,66 @@
+#================== visualize.py ====================
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib.lines import Line2D
 import math
 
-def rect_from_grasp_param(grasp):
-    """Converts (6,) grasp param [x, y, θ, w, h, q] to 4 corner points."""
-    if isinstance(grasp, torch.Tensor):
-        grasp = grasp.detach().cpu().numpy()
-    x, y, theta, w, h, _ = grasp
-
-    # Denormalize assuming image size 224x224
-    x *= 224
-    y *= 224
-    w *= 224
-    h *= 224
-    theta *= np.pi  # Convert back from [-1, 1] to radians
-
-    dx = (w / 2) * np.cos(theta)
-    dy = (w / 2) * np.sin(theta)
-    hx = (h / 2) * np.sin(theta)
-    hy = (h / 2) * -np.cos(theta)
-
-    p1 = [x - dx - hx, y - dy - hy]
-    p2 = [x + dx - hx, y + dy - hy]
-    p3 = [x + dx + hx, y + dy + hy]
-    p4 = [x - dx + hx, y - dy + hy]
-
+def rect_from_grasp_param(pred_params, image_size):
+    """
+    Converts a 6-element prediction vector [x, y, sin(2θ), cos(2θ), w, h] 
+    into a 4x2 rectangle of corner points, scaled to the image size.
+    """
+    if isinstance(pred_params, torch.Tensor):
+        pred_params = pred_params.detach().cpu().numpy()
+    
+    x, y, sin2a, cos2a, w, h = pred_params
+    
+    # Denormalize using the provided image size
+    x, y, w, h = x * image_size, y * image_size, w * image_size, h * image_size
+    
+    angle = np.arctan2(sin2a, cos2a) / 2.0
+    cos_a, sin_a = np.cos(angle), np.sin(angle)
+    
+    p1 = [x - w/2 * cos_a + h/2 * sin_a, y - w/2 * sin_a - h/2 * cos_a]
+    p2 = [x + w/2 * cos_a + h/2 * sin_a, y + w/2 * sin_a - h/2 * cos_a]
+    p3 = [x + w/2 * cos_a - h/2 * sin_a, y + w/2 * sin_a + h/2 * cos_a]
+    p4 = [x - w/2 * cos_a - h/2 * sin_a, y - w/2 * sin_a + h/2 * cos_a]
+    
     return np.array([p1, p2, p3, p4])
 
-def show_rgb_depth_grasps(rgb, depth, grasp=None, pred_grasp=None, save_path=None,
-                          original_size=(480, 640), resized_size=(224, 224)):
-    """
-    Visualize RGB, depth, ground truth grasp rectangles, and predicted grasp.
-
-    Args:
-        rgb: Tensor [3, H, W] or np array [H, W, 3]
-        depth: Tensor [1, H, W] or np array [H, W]
-        grasp: List of torch tensors [4, 2] (ground truth rectangles)
-        pred_grasp: Tensor [6] (predicted grasp vector)
-        save_path: If set, saves the figure to the path
-    """
-
-    # Convert tensors to numpy
+def show_rgb_depth_grasps(rgb, depth, gt_grasps=None, pred_params=None, image_size=300, save_path=None):
+    """Visualizes RGB, depth, ground truth, and predicted grasps."""
     if isinstance(rgb, torch.Tensor):
-        rgb = rgb.permute(1, 2, 0).cpu().numpy()
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+        rgb = rgb.cpu() * std + mean
+        rgb = rgb.permute(1, 2, 0).numpy()
     rgb = np.clip(rgb, 0, 1)
 
     if isinstance(depth, torch.Tensor):
         depth = depth.squeeze().cpu().numpy()
 
-    # Compute scaling factors
-    h_ratio = resized_size[0] / original_size[0]
-    w_ratio = resized_size[1] / original_size[1]
+    fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+    axs[0].imshow(rgb); axs[0].set_title("RGB with Grasps")
+    axs[1].imshow(depth, cmap='gray'); axs[1].set_title("Depth")
 
-    def scale_coords(coords):
-        return coords * np.array([w_ratio, h_ratio])
+    if gt_grasps is not None and len(gt_grasps) > 0:
+        for g in gt_grasps:
+            g_np = g.cpu().numpy()
+            g_closed = np.vstack([g_np, g_np[0]])
+            axs[0].plot(g_closed[:, 0], g_closed[:, 1], 'g-', linewidth=2.5)
 
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-    axs[0].imshow(rgb)
-    axs[0].set_title("RGB")
-    axs[1].imshow(depth, cmap='gray')
-    axs[1].set_title("Depth")
+    if pred_params is not None:
+        pred_rect = rect_from_grasp_param(pred_params, image_size)
+        rect_closed = np.vstack([pred_rect, pred_rect[0]])
+        axs[0].plot(rect_closed[:, 0], rect_closed[:, 1], 'r--', linewidth=2.5)
 
-    legend_handles = []
+    legend_handles = [Line2D([0], [0], color='green', lw=2.5, label='Ground Truth'),
+                      Line2D([0], [0], color='red', linestyle='--', lw=2.5, label='Prediction')]
+    axs[0].legend(handles=legend_handles, loc='upper right')
 
-    # Plot ground truth grasp rectangles
-    if grasp is not None:
-        for g in grasp:
-            g = g.cpu().numpy() if isinstance(g, torch.Tensor) else g
-            g = scale_coords(g)
-            g = np.vstack([g, g[0]])  # Close rectangle
-            axs[0].plot(g[:, 0], g[:, 1], 'b-', linewidth=2)
-        legend_handles.append(Line2D([0], [0], color='blue', lw=2, label='Ground Truth'))
-
-    # Plot predicted grasp
-    if pred_grasp is not None:
-        rect = rect_from_grasp_param(pred_grasp)  # Convert [6] to [4,2]
-        rect = scale_coords(rect)
-        rect = np.vstack([rect, rect[0]])  # Close rectangle
-        axs[0].plot(rect[:, 0], rect[:, 1], 'y-', linewidth=2)
-        legend_handles.append(Line2D([0], [0], color='yellow', lw=2, label='Prediction'))
-
-    if legend_handles:
-        axs[0].legend(handles=legend_handles, loc='lower right')
-
-    for ax in axs:
-        ax.axis('off')
-
+    for ax in axs: ax.axis('off')
     plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=150)
+    if save_path: plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.show()
+    plt.close(fig)
