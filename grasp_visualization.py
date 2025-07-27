@@ -1,31 +1,50 @@
 # ===================== grasp_visualization.py =====================
 import torch
 import random
-from dataset_loader import CornellGraspDataset
+from loader import CornellGraspDataset 
 from model import GraspCNN
 from visualize import show_rgb_depth_grasps
 import os
 
-# Load model
-model = GraspCNN()
-model.load_state_dict(torch.load("outputs/saved_models/grasp_cnn_best.pth"))
-model.eval()
+def visualize_grasps():
+    MODEL_PATH = "outputs/saved_models/grasp_cnn_final_v2.pth"
+    OUTPUT_DIR = "outputs/final_visualizations_v2"
+    N_SAMPLES = 10
 
-# Load dataset
-val_dataset = CornellGraspDataset(root="./data/cornell-grasp")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = GraspCNN().to(device)
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model file not found at {MODEL_PATH}.")
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.eval()
+    print(f"✅ Model loaded successfully from {MODEL_PATH}")
 
-# Directory to save outputs
-os.makedirs("outputs/grasp_outputs", exist_ok=True)
+    val_dataset = CornellGraspDataset(split='val')
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    print(f"✅ Will save {N_SAMPLES} visualization(s) to '{OUTPUT_DIR}/'")
 
-# Number of random samples to visualize
-n_samples = 5
+    for i in range(N_SAMPLES):
+        idx = random.randint(0, len(val_dataset) - 1)
+        sample = val_dataset[idx]
+        
+        rgb_tensor = sample['rgb'].unsqueeze(0).to(device)
+        depth_tensor = sample['depth'].unsqueeze(0).to(device)
+        
+        print(f"\nProcessing sample {i+1}/{N_SAMPLES} (index: {idx})...")
 
-for i in range(n_samples):
-    idx = random.randint(0, len(val_dataset) - 1)
-    sample = val_dataset[idx]
+        with torch.no_grad():
+            pred = model(rgb_tensor, depth_tensor)
+            
+        save_path = os.path.join(OUTPUT_DIR, f"grasp_visualization_{i+1:03d}.png")
+        
+        show_rgb_depth_grasps(
+            rgb=sample['rgb'], 
+            depth=sample['depth'], 
+            gt_grasps=sample['pos_grasps'],
+            pred_params=pred[0],
+            image_size=val_dataset.target_size[0]
+        )
+        print(f"✅ Saved visualization to: {save_path}")
 
-    with torch.no_grad():
-        pred = model(sample['rgb'].unsqueeze(0), sample['depth'].unsqueeze(0))
-        save_path = f"outputs/grasp_outputs/grasp_output_{i+1:03d}.png"
-        show_rgb_depth_grasps(sample['rgb'], sample['depth'], sample['grasp'], pred[0], save_path=save_path, original_size=(480, 640), resized_size=(224, 224))
-        print(f"✅ Saved: {save_path}")
+if __name__ == '__main__':
+    visualize_grasps()
