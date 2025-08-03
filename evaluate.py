@@ -5,55 +5,47 @@ import os
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from shapely.geometry import Polygon
-import math
+from tqdm import tqdm
 
-# Import from your existing project files
 from loader import CornellGraspDataset
 from model import GraspCNN
-from visualize import show_rgb_depth_grasps # For saving qualitative examples
 
 # --- Configuration ---
-MODEL_PATH = "outputs/saved_models/grasp_cnn_final_v2.pth" # Use the final, fine-tuned model
-DATA_ROOT = "./data/cornell-grasp"
-OUTPUT_DIR = "outputs/evaluation_results"
-BATCH_SIZE = 16 
-IOU_THRESHOLD = 0.25 
-ANGLE_THRESHOLD_DEG = 30 
+MODEL_PATH = "outputs/saved_models/grasp_cnn_final_v3.pth" # Path to the trained model
+OUTPUT_DIR = "outputs/evaluation_results_v3"
+BATCH_SIZE = 32
+IOU_THRESHOLD = 0.25
+ANGLE_THRESHOLD_DEG = 30
 
-# --- FIXED: Updated custom collate function ---
-# This now correctly handles the data format from the latest loader.py
+# --- Helper Functions ---
+
 def custom_collate(batch):
+    """Custom collate function to filter out samples with no valid grasps."""
     batch = [item for item in batch if item is not None and item['pos_grasps'].shape[0] > 0]
-    if not batch:
-        return None
+    if not batch: return None
     return {
         'rgb': torch.stack([item['rgb'] for item in batch]),
         'depth': torch.stack([item['depth'] for item in batch]),
         'pos_grasps': [item['pos_grasps'] for item in batch]
     }
 
-# --- FIXED: Updated Helper Functions for sin/cos angle representation ---
-
-def rect_from_grasp_param(pred_params):
+def rect_from_grasp_param(pred_params, image_size):
     """
-    Converts a 6-element prediction vector [x, y, sin(2θ), cos(2θ), w, h] 
-    into a 4x2 rectangle of corner points.
+    Converts a 6-element prediction vector [x, y, sin(2θ), cos(2θ), w, h]
+    into a 4x2 rectangle of corner points, scaled to the image size.
     """
     if isinstance(pred_params, torch.Tensor):
         pred_params = pred_params.detach().cpu().numpy()
     
-    x, y, sin2a, cos2a, w, h = pred_params
+    x_norm, y_norm, sin2a, cos2a, w_norm, h_norm = pred_params
     
-    # Denormalize
-    x, y, w, h = x * 224, y * 224, w * 224, h * 224
+    # Denormalize using the provided image size (CRITICAL FIX)
+    x, y, w, h = x_norm * image_size, y_norm * image_size, w_norm * image_size, h_norm * image_size
     
-    # Recover the angle from sin(2a) and cos(2a)
     angle = np.arctan2(sin2a, cos2a) / 2.0
+    cos_a, sin_a = np.cos(angle), np.sin(angle)
     
-    # Calculate corner points
-    cos_a = np.cos(angle)
-    sin_a = np.sin(angle)
-    
+    # Calculate corner points of the rectangle
     p1 = [x - w/2 * cos_a + h/2 * sin_a, y - w/2 * sin_a - h/2 * cos_a]
     p2 = [x + w/2 * cos_a + h/2 * sin_a, y + w/2 * sin_a - h/2 * cos_a]
     p3 = [x + w/2 * cos_a - h/2 * sin_a, y + w/2 * sin_a + h/2 * cos_a]
@@ -61,21 +53,11 @@ def rect_from_grasp_param(pred_params):
     
     return np.array([p1, p2, p3, p4])
 
-def get_target_vector(rect):
-    """Converts a 4x2 grasp rectangle into a 6-element target vector."""
-    center = rect.mean(axis=0)
-    dx = rect[1] - rect[0]
-    dy = rect[2] - rect[1]
-    
-    width = np.linalg.norm(dx)
-    height = np.linalg.norm(dy)
-    angle = np.arctan2(dx[1], dx[0])
-
-    return np.array([
-        center[0] / 224.0, center[1] / 224.0,
-        np.sin(2 * angle), np.cos(2 * angle),
-        width / 224.0, height / 224.0
-    ])
+def get_angle_from_rect(rect):
+    """Extracts the angle from a 4x2 rectangle."""
+    dx = rect[1, 0] - rect[0, 0]
+    dy = rect[1, 1] - rect[0, 1]
+    return np.arctan2(dy, dx)
 
 def calculate_iou(rect1, rect2):
     """Calculates Intersection over Union (IoU) for two 4x2 rectangles."""
@@ -84,16 +66,17 @@ def calculate_iou(rect1, rect2):
     
     if not poly1.is_valid or not poly2.is_valid: return 0.0
     intersection_area = poly1.intersection(poly2).area
-    union_area = poly1.union(poly2).area
+    union_area = poly1.area + poly2.area - intersection_area
     if union_area == 0: return 0.0
     return intersection_area / union_area
 
-# --- Main Evaluation Script ---
-if __name__ == '__main__':
+def evaluate_model():
+    """Main function to run the full evaluation process."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # --- Load Model ---
     model = GraspCNN().to(device)
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model file not found at {MODEL_PATH}. Please run train.py first.")
@@ -101,63 +84,63 @@ if __name__ == '__main__':
     model.eval()
     print("✅ Model loaded successfully.")
 
-    val_dataset = CornellGraspDataset(root=DATA_ROOT, split='val')
+    # --- Load Dataset ---
+    val_dataset = CornellGraspDataset(split='val')
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=custom_collate)
-    print(f"✅ Validation dataset loaded with {len(val_dataset)} samples.")
+    image_size = val_dataset.target_size[0] # Get image size from dataset (CRITICAL FIX)
+    print(f"✅ Validation dataset loaded with {len(val_dataset)} samples. Image size: {image_size}x{image_size}")
 
+    # --- Evaluation Loop ---
     print("\nStarting evaluation...")
-    all_gt_vectors, all_pred_vectors, all_ious = [], [], []
+    all_ious = []
     successful_grasps, total_grasps = 0, 0
 
     with torch.no_grad():
-        for i, batch in enumerate(val_loader):
+        for batch in tqdm(val_loader, desc="Evaluating"):
             if batch is None: continue
 
             rgb, depth = batch['rgb'].to(device), batch['depth'].to(device)
             gt_rects_batch = batch['pos_grasps']
-            
-            preds = model(rgb, depth).cpu().numpy()
+            preds = model(rgb, depth)
 
-            for j in range(len(preds)):
-                if gt_rects_batch[j].shape[0] == 0: continue
-                
-                # Evaluate against the first ground truth grasp for simplicity
-                gt_rect = gt_rects_batch[j][0].numpy()
+            for j in range(preds.shape[0]):
                 pred_params = preds[j]
+                gt_rects = gt_rects_batch[j].numpy()
                 
-                pred_rect = rect_from_grasp_param(pred_params)
-                iou = calculate_iou(gt_rect, pred_rect)
-                all_ious.append(iou)
-                
-                gt_vector = get_target_vector(gt_rect)
-                all_gt_vectors.append(gt_vector)
-                all_pred_vectors.append(pred_params)
-                
-                # Calculate angle difference correctly
-                gt_angle = np.arctan2(gt_vector[2], gt_vector[3])
-                pred_angle = np.arctan2(pred_params[2], pred_params[3])
-                angle_diff = abs((gt_angle - pred_angle + np.pi) % (2 * np.pi) - np.pi)
-                
-                if iou >= IOU_THRESHOLD and np.rad2deg(angle_diff) <= ANGLE_THRESHOLD_DEG:
-                    successful_grasps += 1
+                if gt_rects.shape[0] == 0: continue
                 total_grasps += 1
-            
-            print(f"  Processed batch {i+1}/{len(val_loader)}...")
+
+                # Convert predicted parameters to a rectangle
+                pred_rect = rect_from_grasp_param(pred_params, image_size)
+                
+                # --- Improved Evaluation: Find best GT match for the prediction ---
+                best_iou = 0
+                best_gt_angle = 0
+                for gt_rect in gt_rects:
+                    iou = calculate_iou(gt_rect, pred_rect)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_gt_angle = get_angle_from_rect(gt_rect)
+                
+                all_ious.append(best_iou)
+                
+                # Check for success
+                pred_angle = get_angle_from_rect(pred_rect)
+                angle_diff_rad = abs(best_gt_angle - pred_angle)
+                angle_diff_deg = np.rad2deg(min(angle_diff_rad, 2 * np.pi - angle_diff_rad))
+
+                if best_iou >= IOU_THRESHOLD and angle_diff_deg <= ANGLE_THRESHOLD_DEG:
+                    successful_grasps += 1
 
     print("✅ Evaluation complete.")
 
     # --- Metrics Calculation & Reporting ---
-    all_gt_vectors = np.array(all_gt_vectors)
-    all_pred_vectors = np.array(all_pred_vectors)
-    
-    mse = np.mean((all_gt_vectors - all_pred_vectors)**2)
-    mae = np.mean(np.abs(all_gt_vectors - all_pred_vectors))
     success_rate = (successful_grasps / total_grasps) * 100 if total_grasps > 0 else 0
-    avg_iou = np.mean(all_ious)
+    avg_iou = np.mean(all_ious) if all_ious else 0
 
     report = f"""
     ==================================================
-              GRASP EVALUATION REPORT
+              GRASP EVALUATION REPORT (v3)
     ==================================================
     
     Metrics based on {total_grasps} validation samples.
@@ -165,47 +148,30 @@ if __name__ == '__main__':
     Grasp Success Rate (IoU > {IOU_THRESHOLD} & Angle < {ANGLE_THRESHOLD_DEG}°): {success_rate:.2f}%
     Average Intersection over Union (IoU): {avg_iou:.4f}
     
-    --- Parameter Prediction Error ---
-    Mean Squared Error (MSE): {mse:.6f}
-    Mean Absolute Error (MAE): {mae:.6f}
-    
     ==================================================
     """
     print(report)
-    with open(os.path.join(OUTPUT_DIR, "evaluation_report.txt"), "w") as f:
+    report_path = os.path.join(OUTPUT_DIR, "evaluation_report.txt")
+    with open(report_path, "w") as f:
         f.write(report)
-    print(f"✅ Report saved to {os.path.join(OUTPUT_DIR, 'evaluation_report.txt')}")
+    print(f"✅ Report saved to {report_path}")
 
     # --- Plotting ---
     print("Generating plots...")
-
+    
     # IoU Distribution
     plt.figure(figsize=(10, 6))
-    plt.hist(all_ious, bins=20, color='skyblue', edgecolor='black')
-    plt.title('Distribution of Intersection over Union (IoU) Scores')
+    plt.hist(all_ious, bins=50, color='skyblue', edgecolor='black', range=(0, 1))
+    plt.title('Distribution of Best Intersection over Union (IoU) Scores')
     plt.xlabel('IoU Score')
     plt.ylabel('Frequency')
     plt.axvline(IOU_THRESHOLD, color='r', linestyle='--', label=f'Success Threshold ({IOU_THRESHOLD})')
     plt.legend()
-    plt.grid(axis='y')
+    plt.grid(axis='y', alpha=0.5)
     plt.savefig(os.path.join(OUTPUT_DIR, "iou_distribution.png"))
-    plt.close()
-
-    # Predicted vs. Ground Truth Scatter Plots
-    param_names = ['Center X', 'Center Y', 'sin(2θ)', 'cos(2θ)', 'Width', 'Height']
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-    fig.suptitle('Predicted vs. Ground Truth Grasp Parameters', fontsize=16)
-    for i, ax in enumerate(axes.flat):
-        ax.scatter(all_gt_vectors[:, i], all_pred_vectors[:, i], alpha=0.3)
-        ax.plot([-1, 1], [-1, 1], 'r--') # Perfect prediction line
-        ax.set_title(param_names[i])
-        ax.set_xlabel('Ground Truth (Normalized)')
-        ax.set_ylabel('Prediction (Normalized)')
-        ax.grid(True)
-        ax.set_aspect('equal', adjustable='box')
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.savefig(os.path.join(OUTPUT_DIR, "predicted_vs_gt_scatter.png"))
     plt.close()
 
     print(f"✅ All plots saved to {OUTPUT_DIR}")
 
+if __name__ == '__main__':
+    evaluate_model()
