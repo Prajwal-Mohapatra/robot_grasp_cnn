@@ -1,5 +1,4 @@
-# robot_grasp_cnn
-
+## robot_grasp_cnn
 # Generative Robotic Grasp Prediction Pipeline
 
 This project implements a state-of-the-art robotic grasp prediction pipeline based on a generative, fully convolutional neural network. It moves beyond simple regression to generate pixel-wise maps of grasp quality, angle, and width, allowing for more accurate and robust grasp detection in cluttered scenes.
