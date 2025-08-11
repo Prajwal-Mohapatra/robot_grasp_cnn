@@ -14,6 +14,7 @@ The architecture and methodology are heavily inspired by the principles outlined
 │   └── visualizations/
 ├── README.md                  # This file
 ├── dataset.py                 # New dataset loader and pre-processor
+├── evaluate.py                # Evaluation parameters 
 ├── model.py                   # New Generative Residual Network (GR-ConvNet)
 ├── train.py                   # New training script for the generative model
 ├── predict.py                 # New script for inference and visualization
