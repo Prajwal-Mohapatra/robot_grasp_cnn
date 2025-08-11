@@ -7,8 +7,19 @@ This project implements a state-of-the-art robotic grasp prediction pipeline bas
 The architecture and methodology are heavily inspired by the principles outlined in the provided technical report, particularly the GR-ConvNet model.
 
 ## Project Structure
+.
+├── data/                     # Placeholder for Cornell Grasp Dataset
+├── outputs/                  # Directory for saved models and visualizations
+│   ├── models/
+│   └── visualizations/
+├── README.md                  # This file
+├── dataset.py                 # New dataset loader and pre-processor
+├── model.py                   # New Generative Residual Network (GR-ConvNet)
+├── train.py                   # New training script for the generative model
+├── predict.py                 # New script for inference and visualization
+├── utils/
+   └── data_processing.py      # Utilities for generating ground-truth maps
 
-.├── data/                  # Placeholder for Cornell Grasp Dataset├── outputs/               # Directory for saved models and visualizations│   ├── models/│   └── visualizations/├── README.md              # This file├── dataset.py             # New dataset loader and pre-processor├── model.py               # New Generative Residual Network (GR-ConvNet)├── train.py               # New training script for the generative model├── predict.py             # New script for inference and visualization└── utils/└── data_processing.py # Utilities for generating ground-truth maps
 ## Core Concepts & Methodology
 
 ### 1. Paradigm Shift: Regression vs. Generation
