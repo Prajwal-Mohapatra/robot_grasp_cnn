@@ -24,16 +24,17 @@ def post_process_output(q_map, cos_map, sin_map, width_map):
     Post-process the raw output of the network to find the best grasp.
     
     Args:
-        q_map (np.ndarray): The quality map.
-        cos_map (np.ndarray): The cos(2θ) map.
-        sin_map (np.ndarray): The sin(2θ) map.
-        width_map (np.ndarray): The width map.
+        q_map (np.ndarray): The 2D quality map.
+        cos_map (np.ndarray): The 2D cos(2θ) map.
+        sin_map (np.ndarray): The 2D sin(2θ) map.
+        width_map (np.ndarray): The 2D width map.
 
     Returns:
         tuple: (x, y, angle, width) of the best grasp.
     """
     # Find the pixel with the highest quality score
     max_q_val = np.max(q_map)
+    # np.unravel_index converts a flat index into a tuple of coordinates
     max_q_idx = np.unravel_index(np.argmax(q_map), q_map.shape)
     y, x = max_q_idx
 
@@ -45,7 +46,7 @@ def post_process_output(q_map, cos_map, sin_map, width_map):
     # Decode the angle
     angle = np.arctan2(sin_val, cos_val) / 2.0
     
-    # Denormalize width (assuming max width of 150 pixels)
+    # Denormalize width (assuming max width of 150 pixels for Cornell dataset)
     MAX_GRASP_WIDTH = 150.0
     width_pixels = width_val * MAX_GRASP_WIDTH
     
@@ -56,18 +57,20 @@ def draw_grasp(ax, x, y, angle, width, color='r'):
     Draws a grasp rectangle on a matplotlib axis.
     """
     w = width / 2
-    h = 10 # Gripper height for visualization
+    h = 10 # Gripper height for visualization, can be adjusted
     
-    # Create points for the rectangle centered at (x,y)
+    # Create points for the rectangle centered at (0,0)
     points = np.array([
         [-h, -w], [h, -w], [h, w], [-h, w]
     ])
     
-    # Rotate points
+    # Create rotation matrix
     rot_matrix = np.array([
         [np.cos(angle), -np.sin(angle)],
         [np.sin(angle), np.cos(angle)]
     ])
+    
+    # Rotate points
     rotated_points = (rot_matrix @ points.T).T
     
     # Translate points to the grasp center
@@ -76,8 +79,11 @@ def draw_grasp(ax, x, y, angle, width, color='r'):
     # Draw the rectangle
     rect = plt.Polygon(translated_points, fill=False, edgecolor=color, linewidth=2)
     ax.add_patch(rect)
+    
+    # --- FIX: Use keyword arguments for color and marker ---
     # Draw center point
-    ax.plot(x, y, f'{color}o', markersize=4)
+    ax.plot(x, y, marker='o', color=color, markersize=4)
+    # ------------------------------------------------------
 
 def main():
     print(f"Using device: {DEVICE}")
@@ -106,7 +112,16 @@ def main():
             pred_maps = model(rgbd_tensor.unsqueeze(0).to(DEVICE))
         
         pred_maps_np = pred_maps.squeeze().cpu().numpy()
-        q_map, cos_map, sin_map, width_map = np.split(pred_maps_np, 4)
+        
+        # Split into individual maps
+        q_map_raw, cos_map_raw, sin_map_raw, width_map_raw = np.split(pred_maps_np, 4)
+
+        # Squeeze the arrays to remove the singleton dimension
+        # This changes the shape from (1, H, W) to (H, W)
+        q_map = q_map_raw.squeeze()
+        cos_map = cos_map_raw.squeeze()
+        sin_map = sin_map_raw.squeeze()
+        width_map = width_map_raw.squeeze()
 
         # Post-process to find the best grasp
         x, y, angle, width = post_process_output(q_map, cos_map, sin_map, width_map)
