@@ -7,6 +7,7 @@ This project implements a state-of-the-art robotic grasp prediction pipeline bas
 The architecture and methodology are heavily inspired by the principles outlined in the provided technical report, particularly the GR-ConvNet model.
 
 ## Project Structure
+'''bash
 .
 ├── data/                     # Placeholder for Cornell Grasp Dataset
 ├── outputs/                  # Directory for saved models and visualizations
@@ -19,6 +20,7 @@ The architecture and methodology are heavily inspired by the principles outlined
 ├── predict.py                 # New script for inference and visualization
 ├── utils/
    └── data_processing.py      # Utilities for generating ground-truth maps
+'''
 
 ## Core Concepts & Methodology
 
