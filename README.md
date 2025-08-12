@@ -19,7 +19,7 @@ The architecture and methodology are heavily inspired by the principles outlined
 ├── train.py                   # New training script for the generative model
 ├── predict.py                 # New script for inference and visualization
 ├── utils/
-   └── data_processing.py      # Utilities for generating ground-truth maps
+    └── data_processing.py      # Utilities for generating ground-truth maps
 ```
 
 ## Core Concepts & Methodology
