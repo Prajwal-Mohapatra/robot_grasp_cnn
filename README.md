@@ -12,6 +12,7 @@ The architecture and methodology are heavily inspired by the principles outlined
 ├── outputs/                  # Directory for saved models and visualizations
 │   ├── models/
 │   └── visualizations/
+│   └── evaluation/
 ├── README.md                  # This file
 ├── dataset.py                 # New dataset loader and pre-processor
 ├── evaluate.py                # Evaluation parameters 
