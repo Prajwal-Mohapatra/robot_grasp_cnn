@@ -7,7 +7,7 @@ import os
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from model import GRConvNet
+from model import GraspCNN
 from dataset import GraspDataset
 
 # --- Hyperparameters ---
@@ -105,7 +105,7 @@ def main():
     print(f"Training on {len(train_dataset)} samples, validating on {len(val_dataset)} samples.")
 
     # Model, Optimizer, Scheduler
-    model = GRConvNet().to(device)
+    model = GraspCNN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
 
@@ -128,7 +128,7 @@ def main():
         # Save the best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            save_path = os.path.join(MODEL_SAVE_PATH, 'grconvnet_best.pth')
+            save_path = os.path.join(MODEL_SAVE_PATH, 'graspcnn_resnet34_best.pth')
             torch.save(model.state_dict(), save_path)
             print(f"✅ New best model saved to {save_path}")
 
@@ -136,12 +136,12 @@ def main():
     plt.figure(figsize=(10, 5))
     plt.plot(train_losses, label='Training Loss')
     plt.plot(val_losses, label='Validation Loss')
-    plt.title('Training and Validation Loss')
+    plt.title('Training and Validation Loss (Resnet34)')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(OUTPUT_DIR, 'loss_curve.png'))
+    plt.savefig(os.path.join(OUTPUT_DIR, 'resnet34_loss_curve.png'))
     plt.show()
     print("Training complete.")
 
@@ -151,3 +151,4 @@ if __name__ == '__main__':
          print("Please download the Cornell Grasp Dataset and place it in the 'data' folder.")
     else:
         main()
+
