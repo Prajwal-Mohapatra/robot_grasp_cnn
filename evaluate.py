@@ -134,7 +134,7 @@ def main():
         print(f"Error: Model file not found at '{MODEL_PATH}'. Please train the model first.")
         return
         
-    model = GRConvNet().to(DEVICE)
+    model = GraspCNN().to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
 
@@ -218,4 +218,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
