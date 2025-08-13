@@ -72,6 +72,13 @@ The `predict.py` script replaces the old visualization logic. It performs the fu
 3.  **Post-processes** the maps to find the best grasp: it finds the pixel with the maximum value in the Quality map, and then looks up the corresponding angle and width values from the other maps.
 4.  Generates a comprehensive visualization showing the input RGB image, the predicted Quality and Angle maps, and the final best grasp overlaid on the image.
 
+## Evaluation Results
+
+After the initial training run, the model achieves the following performance on the validation set:
+* **Overall Grasp Accuracy:** 70.45%
+* **Mean Intersection over Union (IoU) for Correct Grasps:** 0.42
+![evaluation_result](https://drive.google.com/file/d/1VmgZYBfA1IHQ7vYjDDxFf9PsJFwQVW9F/view?usp=drive_link)
+
 ## How to Run the Pipeline
 
 1.  **Setup:** Place the Cornell Grasp Dataset in the `data/` directory.
