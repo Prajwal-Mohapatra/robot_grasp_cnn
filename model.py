@@ -29,7 +29,7 @@ class GraspCNN(nn.Module):
             nn.Flatten(),
             nn.Linear(resnet.fc.in_features, 512),
             nn.ReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.4),
             nn.Linear(512, 256), # Added an extra hidden layer
             nn.ReLU(),
             nn.Dropout(0.5),
@@ -42,3 +42,4 @@ class GraspCNN(nn.Module):
         x = self.avgpool(x)
         x = self.regressor(x)
         return x
+
