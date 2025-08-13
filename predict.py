@@ -6,12 +6,12 @@ import random
 from PIL import Image
 import cv2
 
-from model import GRConvNet
+from model import GraspCNN
 from dataset import GraspDataset
 from utils.data_processing import normalize_rgb, normalize_depth
 
 # --- Configuration ---
-MODEL_PATH = './outputs/models/grconvnet_best.pth'
+MODEL_PATH = './outputs/models/graspcnn_resnet34_best.pth'
 DATA_DIR = './data'
 VIS_OUTPUT_DIR = './outputs/visualizations'
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -168,3 +168,4 @@ if __name__ == '__main__':
          print("Please download the Cornell Grasp Dataset and place it in the 'data' folder.")
     else:
         main()
+
