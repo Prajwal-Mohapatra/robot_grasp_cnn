@@ -93,7 +93,7 @@ def main():
         print(f"Error: Model file not found at '{MODEL_PATH}'. Please train the model first.")
         return
         
-    model = GRConvNet().to(DEVICE)
+    model = GraspCNN().to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
 
@@ -168,4 +168,5 @@ if __name__ == '__main__':
          print("Please download the Cornell Grasp Dataset and place it in the 'data' folder.")
     else:
         main()
+
 
