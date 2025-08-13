@@ -6,12 +6,12 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 from shapely.geometry import Polygon
 
-from model import GRConvNet
+from model import GraspCNN
 from dataset import GraspDataset
 from predict import post_process_output
 
 # --- Configuration ---
-MODEL_PATH = './outputs/models/grconvnet_best.pth'
+MODEL_PATH = './outputs/models/graspcnn_resnet34_best.pth'
 DATA_DIR = './data'
 EVAL_OUTPUT_DIR = './outputs/evaluation'
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -95,7 +95,7 @@ def plot_results(accuracy, iou_scores, angle_errors):
     Plots and saves the evaluation results.
     """
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
-    fig.suptitle('Grasp Prediction Evaluation Results', fontsize=16)
+    fig.suptitle('Grasp Prediction Evaluation Results (resnet34)', fontsize=16)
 
     # Accuracy Bar Chart
     axs[0].bar(['Accuracy'], [accuracy * 100], color='skyblue')
@@ -121,7 +121,7 @@ def plot_results(accuracy, iou_scores, angle_errors):
     axs[2].legend()
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    save_path = os.path.join(EVAL_OUTPUT_DIR, 'evaluation_summary.png')
+    save_path = os.path.join(EVAL_OUTPUT_DIR, 'evaluation_summary_resnet34.png')
     plt.savefig(save_path)
     plt.show()
     print(f"✅ Evaluation plots saved to {save_path}")
@@ -218,3 +218,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
