@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 class ResidualBlock(nn.Module):
     """
-    A residual block with two convolutional layers.
+    A residual block with two convolutional layers. (Unchanged from your original code)
     """
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
         super(ResidualBlock, self).__init__()
@@ -35,27 +35,57 @@ class ResidualBlock(nn.Module):
         out += identity
         return self.relu_out(out)
 
-class GRConvNet(nn.Module):
+class AttentionComplementaryModule(nn.Module):
     """
-    GR-ConvNet: A Generative Residual Convolutional Neural Network for Grasp Prediction.
-    This architecture is an encoder-decoder network with a residual backbone.
+    An Attention Complementary Module (ACM) for fusing RGB and Depth feature maps.
+    It learns a spatial attention map to weigh the importance of each modality at every pixel.
     """
-    def __init__(self, input_channels=4, output_channels=4):
-        super(GRConvNet, self).__init__()
+    def __init__(self, in_channels):
+        super(AttentionComplementaryModule, self).__init__()
+        # This network learns the attention map C
+        self.attention_net = nn.Sequential(
+            nn.Conv2d(in_channels * 2, in_channels // 2, kernel_size=1, bias=False),
+            nn.BatchNorm2d(in_channels // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels // 2, 1, kernel_size=1, bias=False),
+            nn.BatchNorm2d(1),
+            nn.Sigmoid()  # Ensures attention weights are between 0 and 1
+        )
 
-        # Encoder
-        self.encoder_conv1 = nn.Conv2d(input_channels, 32, kernel_size=9, stride=1, padding=4)
-        self.encoder_relu1 = nn.ReLU(inplace=True)
+    def forward(self, rgb_features, depth_features):
+        """ Fused = C * RGB + (1 - C) * Depth """
+        combined = torch.cat((rgb_features, depth_features), dim=1)
+        attention_map = self.attention_net(combined)
+        fused_features = attention_map * rgb_features + (1 - attention_map) * depth_features
+        return fused_features
 
-        self.encoder_res1 = ResidualBlock(32, 32, stride=2) # Downsample
-        self.encoder_res2 = ResidualBlock(32, 64, stride=2) # Downsample
-        self.encoder_res3 = ResidualBlock(64, 128, stride=2) # Downsample
+class AC_GRConvNet(nn.Module):
+    """
+    GR-ConvNet modified with a two-stream encoder and an Attention Complementary Module.
+    """
+    def __init__(self, output_channels=4):
+        super(AC_GRConvNet, self).__init__()
 
-        # Backbone (Residual Core)
+        # -- RGB Stream Encoder --
+        self.rgb_conv1 = nn.Conv2d(3, 32, kernel_size=9, stride=1, padding=4)
+        self.rgb_relu1 = nn.ReLU(inplace=True)
+        self.rgb_res1 = ResidualBlock(32, 32, stride=2)
+        self.rgb_res2 = ResidualBlock(32, 64, stride=2)
+        self.rgb_res3 = ResidualBlock(64, 128, stride=2)
+
+        # -- Depth Stream Encoder --
+        self.depth_conv1 = nn.Conv2d(1, 32, kernel_size=9, stride=1, padding=4)
+        self.depth_relu1 = nn.ReLU(inplace=True)
+        self.depth_res1 = ResidualBlock(32, 32, stride=2)
+        self.depth_res2 = ResidualBlock(32, 64, stride=2)
+        self.depth_res3 = ResidualBlock(64, 128, stride=2)
+
+        # -- Fusion and Backbone --
+        self.acm_fusion = AttentionComplementaryModule(in_channels=128)
         self.backbone_res1 = ResidualBlock(128, 128)
         self.backbone_res2 = ResidualBlock(128, 128)
 
-        # Decoder
+        # -- Decoder -- (Structure remains the same)
         self.decoder_res1 = ResidualBlock(128, 128)
         self.decoder_up1 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
         self.decoder_relu1 = nn.ReLU(inplace=True)
@@ -68,45 +98,57 @@ class GRConvNet(nn.Module):
         self.decoder_up3 = nn.ConvTranspose2d(32, 32, kernel_size=4, stride=2, padding=1)
         self.decoder_relu3 = nn.ReLU(inplace=True)
 
-        # Output Head
-        # Produces 4 maps: Quality, cos(2θ), sin(2θ), Width
+        # -- Output Head -- (Structure remains the same)
         self.output_head = nn.Sequential(
-            nn.Conv2d(32 + input_channels, 32, kernel_size=3, padding=1), # Skip connection from input
+            nn.Conv2d(32 + 4, 32, kernel_size=3, padding=1), # Skip connection from input
             nn.ReLU(inplace=True),
             nn.Conv2d(32, output_channels, kernel_size=1)
         )
 
     def forward(self, x):
-        # Encoder Path
-        enc_c1_out = self.encoder_relu1(self.encoder_conv1(x))
-        enc_r1_out = self.encoder_res1(enc_c1_out)
-        enc_r2_out = self.encoder_res2(enc_r1_out)
-        enc_r3_out = self.encoder_res3(enc_r2_out)
+        # Input 'x' has 4 channels. Split into RGB (3) and Depth (1).
+        rgb_input = x[:, 0:3, :, :]
+        depth_input = x[:, 3:4, :, :]
 
-        # Backbone
-        backbone_out = self.backbone_res2(self.backbone_res1(enc_r3_out))
+        # == Encoder Pass ==
+        # RGB Stream
+        rgb_c1_out = self.rgb_relu1(self.rgb_conv1(rgb_input))
+        rgb_r1_out = self.rgb_res1(rgb_c1_out)
+        rgb_r2_out = self.rgb_res2(rgb_r1_out)
+        rgb_r3_out = self.rgb_res3(rgb_r2_out)
 
-        # Decoder Path with Skip Connections
+        # Depth Stream
+        depth_c1_out = self.depth_relu1(self.depth_conv1(depth_input))
+        depth_r1_out = self.depth_res1(depth_c1_out)
+        depth_r2_out = self.depth_res2(depth_r1_out)
+        depth_r3_out = self.depth_res3(depth_r2_out)
+
+        # == Fusion before Backbone ==
+        fused_bottleneck = self.acm_fusion(rgb_r3_out, depth_r3_out)
+        backbone_out = self.backbone_res2(self.backbone_res1(fused_bottleneck))
+
+        # == Decoder Pass with Fused Skip Connections ==
+        # Fuse skip connections using simple element-wise addition for efficiency
+        fused_skip_r1 = rgb_r1_out + depth_r1_out
+        fused_skip_r2 = rgb_r2_out + depth_r2_out
+        
         dec_r1_out = self.decoder_res1(backbone_out)
         dec_u1_out = self.decoder_relu1(self.decoder_up1(dec_r1_out))
 
-        # Skip connection from encoder_res2 (64 channels)
-        skip1 = torch.cat((dec_u1_out, enc_r2_out), 1)
+        skip1 = torch.cat((dec_u1_out, fused_skip_r2), 1)
         dec_r2_out = self.decoder_res2(skip1)
         dec_u2_out = self.decoder_relu2(self.decoder_up2(dec_r2_out))
 
-        # Skip connection from encoder_res1 (32 channels)
-        skip2 = torch.cat((dec_u2_out, enc_r1_out), 1)
+        skip2 = torch.cat((dec_u2_out, fused_skip_r1), 1)
         dec_r3_out = self.decoder_res3(skip2)
         dec_u3_out = self.decoder_relu3(self.decoder_up3(dec_r3_out))
 
-        # Skip connection from original input image
-        skip3 = torch.cat((dec_u3_out, x), 1)
+        skip3 = torch.cat((dec_u3_out, x), 1) # Final skip from original input
         
-        # Final Output
+        # == Final Output ==
         output = self.output_head(skip3)
 
-        # Apply appropriate activations to each channel
+        # Apply appropriate activations to each channel (Unchanged)
         q_pred = torch.sigmoid(output[:, 0:1, :, :])      # Quality map [0, 1]
         cos_pred = torch.tanh(output[:, 1:2, :, :])       # cos(2θ) map [-1, 1]
         sin_pred = torch.tanh(output[:, 2:3, :, :])       # sin(2θ) map [-1, 1]
@@ -117,11 +159,13 @@ class GRConvNet(nn.Module):
 if __name__ == '__main__':
     # Test the model with a dummy input
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = GRConvNet(input_channels=4).to(device)
-    dummy_input = torch.randn(2, 4, 224, 224).to(device) # Batch size 2, 4 channels, 224x224
+    # The model name is now AC_GRConvNet
+    model = AC_GRConvNet().to(device)
+    # The input shape remains the same (Batch, 4 Channels for RGB-D, Height, Width)
+    dummy_input = torch.randn(2, 4, 224, 224).to(device)
     output = model(dummy_input)
     
-    print("GR-ConvNet Test")
+    print("AC-GRConvNet Test")
     print(f"Input shape: {dummy_input.shape}")
     print(f"Output shape: {output.shape}")
     
@@ -137,4 +181,3 @@ if __name__ == '__main__':
     print(f"  - Quality min/max: {q.min().item():.2f}/{q.max().item():.2f} (Expected: ~0-1)")
     print(f"  - Cos(2θ) min/max: {cos_t.min().item():.2f}/{cos_t.max().item():.2f} (Expected: ~-1-1)")
     print(f"  - Width min/max: {w.min().item():.2f}/{w.max().item():.2f} (Expected: ~0-1)")
-
