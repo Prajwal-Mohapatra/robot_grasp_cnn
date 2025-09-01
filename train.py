@@ -7,7 +7,7 @@ import os
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from model import GRConvNet
+from model import AC_GRConvNet
 from dataset import GraspDataset
 
 # --- Hyperparameters ---
@@ -106,7 +106,7 @@ def main():
     print(f"Training on {len(train_dataset)} samples, validating on {len(val_dataset)} samples.")
 
     # Model, Optimizer, Scheduler
-    model = GRConvNet().to(device)
+    model = AC_GRConvNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
 
@@ -129,7 +129,7 @@ def main():
         # Early stopping logic
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            save_path = os.path.join(MODEL_SAVE_PATH, 'grconvnet_best.pth')
+            save_path = os.path.join(MODEL_SAVE_PATH, 'ac_grconvnet_best.pth')
             torch.save(model.state_dict(), save_path)
             print(f"✅ New best model saved to {save_path}")
             early_stopping_counter = 0  # Reset counter on improvement
