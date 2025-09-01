@@ -6,12 +6,12 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 from shapely.geometry import Polygon
 
-from model import GRConvNet
+from model import AC_GRConvNet
 from dataset import GraspDataset
 from predict import post_process_output
 
 # --- Configuration ---
-MODEL_PATH = './outputs/models/grconvnet_best.pth'
+MODEL_PATH = './outputs/models/ac_grconvnet_best.pth'
 DATA_DIR = './data'
 EVAL_OUTPUT_DIR = './outputs/evaluation'
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -134,7 +134,7 @@ def main():
         print(f"Error: Model file not found at '{MODEL_PATH}'. Please train the model first.")
         return
         
-    model = GRConvNet().to(DEVICE)
+    model = AC_GRConvNet().to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
 
