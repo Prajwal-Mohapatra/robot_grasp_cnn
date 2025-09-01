@@ -6,12 +6,12 @@ import random
 from PIL import Image
 import cv2
 
-from model import GRConvNet
+from model import AC_GRConvNet
 from dataset import GraspDataset
 from utils.data_processing import normalize_rgb, normalize_depth
 
 # --- Configuration ---
-MODEL_PATH = './outputs/models/grconvnet_best.pth'
+MODEL_PATH = './outputs/models/ac_grconvnet_best.pth'
 DATA_DIR = './data'
 VIS_OUTPUT_DIR = './outputs/visualizations'
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -93,7 +93,7 @@ def main():
         print(f"Error: Model file not found at '{MODEL_PATH}'. Please train the model first.")
         return
         
-    model = GRConvNet().to(DEVICE)
+    model = AC_GRConvNet().to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
 
