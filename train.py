@@ -14,10 +14,11 @@ from dataset import GraspDataset
 DATA_DIR = './data'
 OUTPUT_DIR = './outputs'
 MODEL_SAVE_PATH = os.path.join(OUTPUT_DIR, 'models')
-EPOCHS = 50
-BATCH_SIZE = 8
-LEARNING_RATE = 1e-3
+EPOCHS = 100
+BATCH_SIZE = 16
+LEARNING_RATE = 1e-4
 VAL_SPLIT = 0.1
+EARLY_STOPPING_PATIENCE = 15
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Create output directories
@@ -125,12 +126,20 @@ def main():
 
         print(f"Epoch {epoch+1} Summary: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
-        # Save the best model
+        # Early stopping logic
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             save_path = os.path.join(MODEL_SAVE_PATH, 'grconvnet_best.pth')
             torch.save(model.state_dict(), save_path)
             print(f"✅ New best model saved to {save_path}")
+            early_stopping_counter = 0  # Reset counter on improvement
+        else:
+            early_stopping_counter += 1
+            print(f"Early stopping counter: {early_stopping_counter}/{EARLY_STOPPING_PATIENCE}")
+
+        if early_stopping_counter >= EARLY_STOPPING_PATIENCE:
+            print("🛑 Early stopping triggered. No improvement in validation loss.")
+            break
 
     # Plot and save the loss curve
     plt.figure(figsize=(10, 5))
