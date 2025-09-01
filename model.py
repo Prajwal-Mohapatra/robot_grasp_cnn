@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+#GPU RAM utilization 2.9GB previously without ACM 2 GB
+
 class ResidualBlock(nn.Module):
     """
     A residual block with two convolutional layers. (Unchanged from your original code)
