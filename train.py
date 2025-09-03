@@ -108,7 +108,7 @@ def main():
     # Model, Optimizer, Scheduler
     model = GRConvNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5, min_lr=1e-7)
 
     # Training loop
     best_val_loss = float('inf')
@@ -124,7 +124,8 @@ def main():
         
         scheduler.step(val_loss)
 
-        print(f"Epoch {epoch+1} Summary: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch+1} Summary: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr}")
 
         # Early stopping logic
         if val_loss < best_val_loss:
