@@ -14,9 +14,9 @@ from dataset import GraspDataset
 DATA_DIR = './data'
 OUTPUT_DIR = './outputs'
 MODEL_SAVE_PATH = os.path.join(OUTPUT_DIR, 'models')
-EPOCHS = 50
-BATCH_SIZE = 8
-LEARNING_RATE = 1e-3
+EPOCHS = 100
+BATCH_SIZE = 16
+LEARNING_RATE = 1e-4
 VAL_SPLIT = 0.1
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
