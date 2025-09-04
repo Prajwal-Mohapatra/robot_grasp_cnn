@@ -82,10 +82,12 @@ After the initial training run, the model achieves the following performance on 
 
 1.  **Setup:** Place the Cornell Grasp Dataset in the `data/` directory.
 2.  **Training:** Run the training script. It will save the best model to `outputs/models/`.
+3.  
     ```bash
     python train.py
     ```
-3.  **Prediction:** Run the prediction script to see the results on random validation samples. Visualizations will be saved to `outputs/visualizations/`.
+4.  **Prediction:** Run the prediction script to see the results on random validation samples. Visualizations will be saved to `outputs/visualizations/`.
+5.  
     ```bash
     python predict.py
     ```
