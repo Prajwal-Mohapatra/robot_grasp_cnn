@@ -75,7 +75,7 @@ The `predict.py` script replaces the old visualization logic. It performs the fu
 ## Evaluation Results
 
 After the initial training run, the model achieves the following performance on the validation set:
-* **Overall Grasp Accuracy:** 70.45%
+* **Overall Grasp Accuracy:** 85.23%
 * **Mean Intersection over Union (IoU) for Correct Grasps:** 0.42
 
 ## How to Run the Pipeline
