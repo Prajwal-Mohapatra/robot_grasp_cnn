@@ -14,11 +14,11 @@ from dataset import GraspDataset
 DATA_DIR = './data'
 OUTPUT_DIR = './outputs'
 MODEL_SAVE_PATH = os.path.join(OUTPUT_DIR, 'models')
-EPOCHS = 100
-BATCH_SIZE = 8
-LEARNING_RATE = 1e-5
+EPOCHS = 50
+BATCH_SIZE = 16
+LEARNING_RATE = 1e-4
 VAL_SPLIT = 0.1
-EARLY_STOPPING_PATIENCE = 10
+EARLY_STOPPING_PATIENCE = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Create output directories
@@ -108,7 +108,7 @@ def main():
     # Model, Optimizer, Scheduler
     model = AC_GRConvNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5, min_lr=1e-7)
 
     # Training loop
     best_val_loss = float('inf')
@@ -123,8 +123,8 @@ def main():
         val_losses.append(val_loss)
         
         scheduler.step(val_loss)
-
-        print(f"Epoch {epoch+1} Summary: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch+1} Summary: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr}")
 
         # Early stopping logic
         if val_loss < best_val_loss:
