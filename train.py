@@ -15,10 +15,10 @@ DATA_DIR = './data'
 OUTPUT_DIR = './outputs'
 MODEL_SAVE_PATH = os.path.join(OUTPUT_DIR, 'models')
 EPOCHS = 100
-BATCH_SIZE = 16
-LEARNING_RATE = 1e-4
+BATCH_SIZE = 8
+LEARNING_RATE = 1e-5
 VAL_SPLIT = 0.1
-EARLY_STOPPING_PATIENCE = 15
+EARLY_STOPPING_PATIENCE = 10
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Create output directories
