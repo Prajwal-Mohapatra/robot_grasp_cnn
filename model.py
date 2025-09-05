@@ -87,18 +87,21 @@ class AC_GRConvNet(nn.Module):
         self.backbone_res1 = ResidualBlock(128, 128)
         self.backbone_res2 = ResidualBlock(128, 128)
 
-        # -- Decoder -- (Structure remains the same)
+        # -- Decoder -- (Now with explicit layers for upsampling)
         self.decoder_res1 = ResidualBlock(128, 128)
-        self.decoder_up1 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
-        self.decoder_relu1 = nn.ReLU(inplace=True)
+        self.decoder_up1_conv = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1, bias=False)
+        self.decoder_up1_bn = nn.BatchNorm2d(64)
+        self.decoder_up1_relu = nn.ReLU(inplace=True)
 
         self.decoder_res2 = ResidualBlock(64 + 64, 64) # Skip connection from encoder_res2
-        self.decoder_up2 = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1)
-        self.decoder_relu2 = nn.ReLU(inplace=True)
+        self.decoder_up2_conv = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1, bias=False)
+        self.decoder_up2_bn = nn.BatchNorm2d(32)
+        self.decoder_up2_relu = nn.ReLU(inplace=True)
 
         self.decoder_res3 = ResidualBlock(32 + 32, 32) # Skip connection from encoder_res1
-        self.decoder_up3 = nn.ConvTranspose2d(32, 32, kernel_size=4, stride=2, padding=1)
-        self.decoder_relu3 = nn.ReLU(inplace=True)
+        self.decoder_up3_conv = nn.ConvTranspose2d(32, 32, kernel_size=4, stride=2, padding=1, bias=False)
+        self.decoder_up3_bn = nn.BatchNorm2d(32)
+        self.decoder_up3_relu = nn.ReLU(inplace=True)
 
         # -- Output Head -- (Structure remains the same)
         self.output_head = nn.Sequential(
@@ -135,15 +138,27 @@ class AC_GRConvNet(nn.Module):
         fused_skip_r2 = rgb_r2_out + depth_r2_out
         
         dec_r1_out = self.decoder_res1(backbone_out)
-        dec_u1_out = self.decoder_relu1(self.decoder_up1(dec_r1_out))
+        
+        # Explicitly apply layers instead of nn.Sequential
+        dec_u1_out = self.decoder_up1_conv(dec_r1_out)
+        dec_u1_out = self.decoder_up1_bn(dec_u1_out)
+        dec_u1_out = self.decoder_up1_relu(dec_u1_out)
 
         skip1 = torch.cat((dec_u1_out, fused_skip_r2), 1)
         dec_r2_out = self.decoder_res2(skip1)
-        dec_u2_out = self.decoder_relu2(self.decoder_up2(dec_r2_out))
+        
+        # Explicitly apply layers
+        dec_u2_out = self.decoder_up2_conv(dec_r2_out)
+        dec_u2_out = self.decoder_up2_bn(dec_u2_out)
+        dec_u2_out = self.decoder_up2_relu(dec_u2_out)
 
         skip2 = torch.cat((dec_u2_out, fused_skip_r1), 1)
         dec_r3_out = self.decoder_res3(skip2)
-        dec_u3_out = self.decoder_relu3(self.decoder_up3(dec_r3_out))
+        
+        # Explicitly apply layers
+        dec_u3_out = self.decoder_up3_conv(dec_r3_out)
+        dec_u3_out = self.decoder_up3_bn(dec_u3_out)
+        dec_u3_out = self.decoder_up3_relu(dec_u3_out)
 
         skip3 = torch.cat((dec_u3_out, x), 1) # Final skip from original input
         
