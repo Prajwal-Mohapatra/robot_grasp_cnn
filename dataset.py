@@ -4,7 +4,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
-import torchvision.transforms.functional as TF
+from torchvision import transforms
+import torchvision.transforms.functional as F
 import random
 import cv2
 
@@ -30,7 +31,6 @@ class GraspDataset(Dataset):
         self.augment = augment
 
         # Use recursive glob to find files, making it robust to subdirectory structures.
-        # This will search all subfolders within data_dir for the grasp files.
         search_path = os.path.join(data_dir, '**', '*cpos.txt')
         self.grasp_files = glob.glob(search_path, recursive=True)
         self.grasp_files.sort()
@@ -38,7 +38,6 @@ class GraspDataset(Dataset):
         print(f"Searching for grasp files in: {search_path}")
         print(f"Found {len(self.grasp_files)} grasp files.")
 
-        # Add a check to ensure files were found.
         if len(self.grasp_files) == 0:
             raise FileNotFoundError(
                 f"No grasp files ('*cpos.txt') found in directory '{data_dir}'. "
@@ -74,8 +73,7 @@ class GraspDataset(Dataset):
     def __getitem__(self, idx):
         grasp_file = self.grasp_files[idx]
         
-        # Construct paths for RGB and depth images. The file names are like 'pcd0100cpos.txt'.
-        # We replace 'cpos.txt' with 'r.png' for RGB and 'd.tiff' for depth.
+        # Construct paths for RGB and depth images.
         base_name = grasp_file.replace('cpos.txt', '')
         rgb_path = base_name + 'r.png'
         depth_path = base_name + 'd.tiff'
@@ -93,41 +91,64 @@ class GraspDataset(Dataset):
 
             # Data Augmentation
             if self.augment:
-                angle = (random.random() - 0.5) * 20 # -10 to 10 degrees
-                scale = random.random() * 0.2 + 0.9 # 0.9 to 1.1 scale
+                # 1. Random Horizontal Flip
+                if random.random() > 0.5:
+                    rgb_img = F.hflip(rgb_img)
+                    depth_img = F.hflip(depth_img)
+                    # Flip grasp points by reflecting across the vertical center line
+                    for i in range(len(grasps)):
+                        grasps[i][:, 0] = original_size[0] - grasps[i][:, 0]
                 
-                # Apply rotation
-                rgb_img = TF.rotate(rgb_img, angle)
-                depth_img = TF.rotate(depth_img, angle)
-
+                # 2. Random Rotation
+                angle = (random.random() - 0.5) * 20 # -10 to 10 degrees
+                rgb_img = F.rotate(rgb_img, angle)
+                depth_img = F.rotate(depth_img, angle)
                 # Rotate grasp points
                 rot_matrix = cv2.getRotationMatrix2D((original_size[0]/2, original_size[1]/2), -angle, 1.0)
                 for i, g in enumerate(grasps):
                     g_hom = np.hstack((g, np.ones((g.shape[0], 1))))
                     grasps[i] = (rot_matrix @ g_hom.T).T[:, :2]
 
-                # Apply scaling (zoom)
+                # 3. Random Translation
+                translate_x = random.randint(-20, 20)
+                translate_y = random.randint(-20, 20)
+                rgb_img = F.affine(rgb_img, angle=0, translate=(translate_x, translate_y), scale=1.0, shear=0)
+                depth_img = F.affine(depth_img, angle=0, translate=(translate_x, translate_y), scale=1.0, shear=0)
+                # Translate grasp points
+                for i in range(len(grasps)):
+                    grasps[i][:, 0] += translate_x
+                    grasps[i][:, 1] += translate_y
+
+                # 4. Random Scaling (Zoom)
+                scale = random.random() * 0.2 + 0.9 # 0.9 to 1.1 scale
                 new_width = int(original_size[0] * scale)
                 new_height = int(original_size[1] * scale)
-                rgb_img = TF.resize(rgb_img, (new_height, new_width))
-                depth_img = TF.resize(depth_img, (new_height, new_width))
-                
+                rgb_img = F.resize(rgb_img, (new_height, new_width))
+                depth_img = F.resize(depth_img, (new_height, new_width))
                 # Scale grasp points
                 for i in range(len(grasps)):
                     grasps[i] *= scale
-
                 # Center crop back to original size
                 left = (new_width - original_size[0]) // 2
                 top = (new_height - original_size[1]) // 2
-                rgb_img = TF.crop(rgb_img, top, left, original_size[1], original_size[0])
-                depth_img = TF.crop(depth_img, top, left, original_size[1], original_size[0])
+                rgb_img = F.crop(rgb_img, top, left, original_size[1], original_size[0])
+                depth_img = F.crop(depth_img, top, left, original_size[1], original_size[0])
+                # Adjust grasp points for the center crop
+                for i in range(len(grasps)):
+                    grasps[i][:, 0] -= left
+                    grasps[i][:, 1] -= top
+
+                # 5. Random Color Jittering (applied only to the RGB image)
+                # Correctly import and use transforms.ColorJitter
+                jitter = transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
+                rgb_img = jitter(rgb_img)
 
             # Resize images and grasps to network output size
             scale_x = self.output_size[1] / original_size[0]
             scale_y = self.output_size[0] / original_size[1]
             
-            rgb_img = TF.resize(rgb_img, self.output_size)
-            depth_img = TF.resize(depth_img, self.output_size)
+            rgb_img = F.resize(rgb_img, self.output_size)
+            depth_img = F.resize(depth_img, self.output_size)
             
             for i in range(len(grasps)):
                 grasps[i][:, 0] *= scale_x
@@ -157,7 +178,6 @@ class GraspDataset(Dataset):
             return rgbd_tensor, gt_maps
         except FileNotFoundError as e:
             print(f"Error loading files for index {idx}: {e}")
-            # Return None or handle this case appropriately in your training loop's collate_fn
             return None
 
 if __name__ == '__main__':
