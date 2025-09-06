@@ -103,6 +103,8 @@ def main():
     
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+    print("Training on AC_GRConvNet")
+    print(f"Hyper-parameters:\n Batch Size: {BATCH_SIZE}\n LR: {LEARNING_RATE}")
     print(f"Training on {len(train_dataset)} samples, validating on {len(val_dataset)} samples.")
 
     # Model, Optimizer, Scheduler
