@@ -5,20 +5,21 @@ import os
 import random
 from PIL import Image
 import cv2
-from torch.utils.data import Subset
+from torch.utils.data import Subset # Added
 
 from model import AC_GRConvNet
 from dataset import GraspDataset
 from utils.data_processing import normalize_rgb, normalize_depth
 
 # --- Configuration ---
-MODEL_PATH = './outputs/models/ac_grconvnet_best.pth'
+# Updated model path to use the fine-tuned model
+MODEL_PATH = './outputs/models/ac_grconvnet_finetune_best.pth'
 DATA_DIR = './data'
 VIS_OUTPUT_DIR = './outputs/visualizations'
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_VISUALIZATIONS = 5
 
-# --- Path to load data splits ---
+# Added paths for loading the correct data split
 SPLIT_DIR = './outputs/splits'
 TEST_INDICES_PATH = os.path.join(SPLIT_DIR, 'test_indices.npy')
 
@@ -41,7 +42,7 @@ def post_process_output(q_map, cos_map, sin_map, width_map):
     max_q_val = np.max(q_map)
     # np.unravel_index converts a flat index into a tuple of coordinates
     max_q_idx = np.unravel_index(np.argmax(q_map), q_map.shape)
-    y, x = max_q_idx # y is row, x is column
+    y, x = max_q_idx
 
     # Get the angle and width at that pixel
     cos_val = cos_map[y, x]
@@ -86,9 +87,9 @@ def draw_grasp(ax, x, y, angle, width, color='r'):
     rect = plt.Polygon(translated_points, fill=False, edgecolor=color, linewidth=2)
     ax.add_patch(rect)
     
-    # Draw center point
+    # --- FIX: Use keyword arguments for color and marker ---
     ax.plot(x, y, marker='o', color=color, markersize=4)
-
+    # ------------------------------------------------------
 
 def main():
     print(f"Using device: {DEVICE}")
@@ -102,65 +103,42 @@ def main():
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
 
-    # Load Dataset and Test Split Indices
-    if not os.path.exists(TEST_INDICES_PATH):
-        print(f"Error: Test split file not found at '{TEST_INDICES_PATH}'.")
-        print("Please run train.py first to generate data splits.")
-        return
-
+    # Load Dataset for visualization samples
+    # Updated to load only the test set indices
     try:
         full_dataset = GraspDataset(DATA_DIR, augment=False)
-        if len(full_dataset) == 0:
-            print("Dataset is empty. Please check the data directory.")
+        if not os.path.exists(TEST_INDICES_PATH):
+            print(f"Error: Test split file not found at '{TEST_INDICES_PATH}'.")
+            print("Please run train.py first to generate the data splits.")
             return
-            
         test_indices = np.load(TEST_INDICES_PATH)
         test_dataset = Subset(full_dataset, test_indices)
-        print(f"Loaded {len(test_dataset)} test samples for visualization.")
-        
+        print(f"Loaded test set with {len(test_dataset)} samples for visualization.")
     except FileNotFoundError as e:
         print(e)
         return
+
     
     for i in range(NUM_VISUALIZATIONS):
+        print(f"\nVisualizing sample {i+1}/{NUM_VISUALIZATIONS}...")
         
         # Get a random sample from the test set
-        random_subset_idx = random.randint(0, len(test_dataset) - 1)
-        # Get the original index from the full dataset
-        original_dataset_idx = test_indices[random_subset_idx]
+        idx_in_test_set = random.randint(0, len(test_dataset) - 1)
+        rgbd_tensor, _ = test_dataset[idx_in_test_set]
         
-        print(f"\nVisualizing sample {i+1}/{NUM_VISUALIZATIONS} (Test Index: {random_subset_idx}, Original Index: {original_dataset_idx})...")
-        
-        try:
-            rgbd_tensor, _ = test_dataset[random_subset_idx]
-            if rgbd_tensor is None:
-                print(f"Skipping sample, data could not be loaded.")
-                continue
-        except Exception as e:
-            print(f"Error loading sample: {e}")
-            continue
+        # Get the original index from the full dataset for the title
+        original_idx = test_indices[idx_in_test_set]
         
         # Perform inference
         with torch.no_grad():
             pred_maps = model(rgbd_tensor.unsqueeze(0).to(DEVICE))
         
-        pred_maps_np = pred_maps.squeeze().cpu().numpy()
-        
-        # Split into individual maps
-        q_map_raw, cos_map_raw, sin_map_raw, width_map_raw = np.split(pred_maps_np, 4)
-
-        # Squeeze the arrays
-        q_map = q_map_raw.squeeze()
-        cos_map = cos_map_raw.squeeze()
-        sin_map = sin_map_raw.squeeze()
-        width_map = width_map_raw.squeeze()
-
         # Post-process to find the best grasp
         x, y, angle, width = post_process_output(q_map, cos_map, sin_map, width_map)
         
         # Visualization
         fig, axs = plt.subplots(1, 4, figsize=(20, 5))
-        fig.suptitle(f'Grasp Prediction - Original Index {original_dataset_idx}', fontsize=16)
+        fig.suptitle(f'Grasp Prediction - Sample {original_idx} (from Test Set)', fontsize=16)
 
         # 1. Original RGB Image
         # Denormalize for display
@@ -179,7 +157,7 @@ def main():
         fig.colorbar(im1, ax=axs[1], fraction=0.046, pad=0.04)
 
         # 3. Predicted Angle Map
-        angle_map = np.arctan2(sin_map, cos_map) / 2.0
+        # We visualize the angle itself, not the cos/sin components
         im2 = axs[2].imshow(angle_map, cmap='hsv', vmin=-np.pi/2, vmax=np.pi/2)
         axs[2].set_title('Predicted Angle (θ)')
         axs[2].axis('off')
@@ -203,4 +181,5 @@ if __name__ == '__main__':
          print("Please download the Cornell Grasp Dataset and place it in the 'data' folder.")
     else:
         main()
+
 
