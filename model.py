@@ -166,10 +166,10 @@ class AC_GRConvNet(nn.Module):
         output = self.output_head(skip3)
 
         # Apply appropriate activations to each channel (Unchanged)
-        q_pred = torch.sigmoid(output[:, 0:1, :, :])      # Quality map [0, 1]
-        cos_pred = torch.tanh(output[:, 1:2, :, :])       # cos(2θ) map [-1, 1]
-        sin_pred = torch.tanh(output[:, 2:3, :, :])       # sin(2θ) map [-1, 1]
-        width_pred = torch.sigmoid(output[:, 3:4, :, :])  # Width map [0, 1]
+        q_pred = torch.sigmoid(output[:, 0:1, :, :])     # Quality map [0, 1]
+        cos_pred = torch.tanh(output[:, 1:2, :, :])      # cos(2θ) map [-1, 1]
+        sin_pred = torch.tanh(output[:, 2:3, :, :])      # sin(2θ) map [-1, 1]
+        width_pred = torch.sigmoid(output[:, 3:4, :, :]) # Width map [0, 1]
 
         return torch.cat([q_pred, cos_pred, sin_pred, width_pred], 1)
 
