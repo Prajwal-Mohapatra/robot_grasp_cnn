@@ -32,10 +32,10 @@ INITIAL_LEARNING_RATE = 1e-4
 # --- New Fine-Tuning Scheduler Params ---
 FINETUNE_LR_MAX = 1e-5          # Peak LR for cosine anneal
 FINETUNE_LR_MIN = 1e-7          # Final LR
-FINETUNE_WARMUP_EPOCHS = 3      # Number of epochs to ramp up to FINETUNE_LR_MAX
+# FINETUNE_WARMUP_EPOCHS = 3    # Removed as per request
 
-# --- Data Split Ratios ---
-VAL_SPLIT_RATIO = 0.25
+# --- Data Split Ratios (UPDATED) ---
+VAL_SPLIT_RATIO = 0.15   # Changed from 0.25
 TEST_SPLIT_RATIO = 0.15
 
 # --- Paths for saved indices ---
@@ -184,7 +184,7 @@ def main():
         val_indices = np.load(VAL_INDICES_PATH)
         test_indices = np.load(TEST_INDICES_PATH)
     else:
-        print("Creating new 60/25/15 data splits...")
+        print("Creating new 70/15/15 data splits...") # Updated print message
         test_size = int(dataset_size * TEST_SPLIT_RATIO)
         val_size = int(dataset_size * VAL_SPLIT_RATIO)
         train_size = dataset_size - val_size - test_size
@@ -205,7 +205,8 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
     
-    print(f"Dataset split: {len(train_dataset)} Train (60%), {len(val_dataset)} Val (25%), {len(test_indices)} Test (15%)")
+    # Updated print message
+    print(f"Dataset split: {len(train_dataset)} Train (70%), {len(val_dataset)} Val (15%), {len(test_indices)} Test (15%)")
 
     # --- Model, Optimizer ---
     model = AC_GRConvNet().to(device)
@@ -270,21 +271,12 @@ def main():
     # Re-initialize optimizer for fine-tuning, setting the new LR
     optimizer = optim.Adam(model.parameters(), lr=FINETUNE_LR_MAX) 
 
-    # --- Define the new schedulers for fine-tuning ---
-    warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=FINETUNE_WARMUP_EPOCHS)
-    cosine_scheduler = CosineAnnealingLR(optimizer, 
-                                        T_max=FINETUNE_EPOCHS - FINETUNE_WARMUP_EPOCHS, 
-                                        eta_min=FINETUNE_LR_MIN)
-    
-    # Combine them sequentially
-    #
-    # *** THIS IS THE FIX ***
-    # The variable is renamed from `sequential_scheduler` to `scheduler`
-    # to correctly re-assign the scheduler from Stage 1.
-    #
-    scheduler = SequentialLR(optimizer, 
-                             schedulers=[warmup_scheduler, cosine_scheduler], 
-                             milestones=[FINETUNE_WARMUP_EPOCHS])
+    # --- Define the new scheduler for fine-tuning ---
+    # Removed LinearLR warmup scheduler
+    # Use only CosineAnnealingLR for the full fine-tuning duration
+    scheduler = CosineAnnealingLR(optimizer, 
+                                  T_max=FINETUNE_EPOCHS, 
+                                  eta_min=FINETUNE_LR_MIN)
     
     best_val_loss_finetune = best_val_loss
     early_stopping_counter = 0 # Reset counter for fine-tuning
