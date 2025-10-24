@@ -58,18 +58,31 @@ def get_device():
 def compute_loss(pred_maps, gt_maps):
     """
     Computes the masked loss for the generative model.
+    Loss for angle and width is only computed where a grasp is present.
     """
     pred_q, pred_cos, pred_sin, pred_width = torch.split(pred_maps, 1, dim=1)
+    
+    # Ensure gt_maps is a dictionary and keys exist
+    if not isinstance(gt_maps, dict):
+        raise TypeError(f"gt_maps must be a dict, but got {type(gt_maps)}")
+        
     gt_q = gt_maps['q']
     gt_cos = gt_maps['cos']
     gt_sin = gt_maps['sin']
     gt_width = gt_maps['width']
 
+    # Loss for quality map (MSE)
     loss_q = nn.functional.mse_loss(pred_q, gt_q)
+    
+    # Create a mask for positive grasp regions
     mask = (gt_q > 0.5).float()
+    
+    # Masked loss for angle and width
     loss_cos = nn.functional.mse_loss(pred_cos * mask, gt_cos * mask)
     loss_sin = nn.functional.mse_loss(pred_sin * mask, gt_sin * mask)
     loss_width = nn.functional.mse_loss(pred_width * mask, gt_width * mask)
+
+    # Combine losses (can be weighted if needed)
     return loss_q + loss_cos + loss_sin + loss_width
 
 def train_one_epoch(model, device, train_loader, optimizer):
@@ -80,13 +93,16 @@ def train_one_epoch(model, device, train_loader, optimizer):
     for rgbd, gt_maps in pbar:
         rgbd = rgbd.to(device)
         gt_maps = {k: v.to(device) for k, v in gt_maps.items()}
+
         optimizer.zero_grad()
         pred_maps = model(rgbd)
         loss = compute_loss(pred_maps, gt_maps)
         loss.backward()
         optimizer.step()
+
         total_loss += loss.item()
         pbar.set_postfix({'loss': loss.item()})
+        
     return total_loss / len(train_loader)
 
 def validate_one_epoch(model, device, val_loader):
@@ -98,24 +114,27 @@ def validate_one_epoch(model, device, val_loader):
         for rgbd, gt_maps in pbar:
             rgbd = rgbd.to(device)
             gt_maps = {k: v.to(device) for k, v in gt_maps.items()}
+            
             pred_maps = model(rgbd)
             loss = compute_loss(pred_maps, gt_maps)
             total_loss += loss.item()
             pbar.set_postfix({'val_loss': loss.item()})
+            
     return total_loss / len(val_loader)
 
 def print_gpu_utilization(device):
-    """
-    Prints the current GPU memory utilization.
-    """
+    """Prints the current GPU memory utilization if on CUDA."""
     if device.type == 'cuda':
         try:
-            free_mem, total_mem = torch.cuda.mem_get_info(device)
-            used_mem_mb = (total_mem - free_mem) / (1024 * 1024)
-            total_mem_mb = total_mem / (1024 * 1024)
+            # torch.cuda.mem_get_info() returns (free, total)
+            free_mem_b, total_mem_b = torch.cuda.mem_get_info()
+            total_mem_mb = total_mem_b / (1024**2)
+            used_mem_b = total_mem_b - free_mem_b
+            used_mem_mb = used_mem_b / (1024**2)
             print(f"GPU Utilization: {used_mem_mb:.2f} MB / {total_mem_mb:.2f} MB ({used_mem_mb/total_mem_mb*100:.1f}%)")
         except Exception as e:
             print(f"Could not get GPU memory info: {e}")
+
 # --- NEW CSV Logger Functions ---
 
 def setup_logger(log_path):
@@ -166,44 +185,41 @@ def main():
         test_indices = np.load(TEST_INDICES_PATH)
     else:
         print("Creating new 60/25/15 data splits...")
-        indices = list(range(dataset_size))
-        np.random.shuffle(indices)
         test_size = int(dataset_size * TEST_SPLIT_RATIO)
         val_size = int(dataset_size * VAL_SPLIT_RATIO)
         train_size = dataset_size - val_size - test_size
+        
+        indices = np.random.permutation(dataset_size)
         train_indices = indices[:train_size]
         val_indices = indices[train_size : train_size + val_size]
         test_indices = indices[train_size + val_size :]
+        
         np.save(TRAIN_INDICES_PATH, train_indices)
         np.save(VAL_INDICES_PATH, val_indices)
         np.save(TEST_INDICES_PATH, test_indices)
-        print("New data splits created and saved.")
+        print(f"New splits saved to {SPLIT_DIR}")
 
     train_dataset = Subset(full_dataset, train_indices)
     val_dataset = Subset(full_dataset, val_indices)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+    
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
     
     print(f"Dataset split: {len(train_dataset)} Train (60%), {len(val_dataset)} Val (25%), {len(test_indices)} Test (15%)")
 
     # --- Model, Optimizer ---
     model = AC_GRConvNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=INITIAL_LEARNING_RATE)
-    
-    # --- Training Loop Variables ---
-    train_losses, val_losses = [], []
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5, min_lr=1e-7)
     
     # --- STAGE 1: Main Training ---
     print(f"\n--- Starting STAGE 1: Main Training ({MAIN_EPOCHS} Epochs) ---")
-    
-    # Scheduler for Stage 1: ReduceLROnPlateau
-    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5, min_lr=FINETUNE_LR_MIN)
-    
     best_val_loss = float('inf')
-    early_stopping_counter = 0
+    train_losses, val_losses = [], []
     
     for epoch in range(MAIN_EPOCHS):
         print(f"\n--- Epoch {epoch+1}/{MAIN_EPOCHS + FINETUNE_EPOCHS} (Main Training) ---")
+        
         train_loss = train_one_epoch(model, device, train_loader, optimizer)
         val_loss = validate_one_epoch(model, device, val_loader)
         
@@ -222,17 +238,18 @@ def main():
         # --- Log to CSV ---
         log_epoch(log_writer, epoch + 1, 'main', train_loss, val_loss, current_lr)
 
+        # Early stopping logic
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), MODEL_SAVE_PATH_MAIN)
-            print(f"✅ New best *main* model saved to {MODEL_SAVE_PATH_MAIN}")
-            early_stopping_counter = 0
+            print(f"✅ New best main model saved to {MODEL_SAVE_PATH_MAIN}")
+            early_stopping_counter = 0  # Reset counter on improvement
         else:
             early_stopping_counter += 1
             print(f"Early stopping counter: {early_stopping_counter}/{EARLY_STOPPING_PATIENCE}")
 
         if early_stopping_counter >= EARLY_STOPPING_PATIENCE:
-            print("🛑 Early stopping triggered during main training.")
+            print(f"🛑 Early stopping triggered in main training.")
             break
             
     print(f"--- Main Training Complete. Best model saved to {MODEL_SAVE_PATH_MAIN} ---")
@@ -249,16 +266,39 @@ def main():
         
     print(f"Loading best main model from {MODEL_SAVE_PATH_MAIN} for fine-tuning.")
     model.load_state_dict(torch.load(MODEL_SAVE_PATH_MAIN))
+
+    # Re-initialize optimizer for fine-tuning, setting the new LR
+    optimizer = optim.Adam(model.parameters(), lr=FINETUNE_LR_MAX) 
+
+    # --- Define the new schedulers for fine-tuning ---
+    warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=FINETUNE_WARMUP_EPOCHS)
+    cosine_scheduler = CosineAnnealingLR(optimizer, 
+                                        T_max=FINETUNE_EPOCHS - FINETUNE_WARMUP_EPOCHS, 
+                                        eta_min=FINETUNE_LR_MIN)
+    
+    # Combine them sequentially
+    #
+    # *** THIS IS THE FIX ***
+    # The variable is renamed from `sequential_scheduler` to `scheduler`
+    # to correctly re-assign the scheduler from Stage 1.
+    #
+    scheduler = SequentialLR(optimizer, 
+                             schedulers=[warmup_scheduler, cosine_scheduler], 
+                             milestones=[FINETUNE_WARMUP_EPOCHS])
+    
+    best_val_loss_finetune = best_val_loss
+    early_stopping_counter = 0 # Reset counter for fine-tuning
     
     for epoch in range(MAIN_EPOCHS, MAIN_EPOCHS + FINETUNE_EPOCHS):
         print(f"\n--- Epoch {epoch+1}/{MAIN_EPOCHS + FINETUNE_EPOCHS} (Fine-Tuning) ---")
+        
         train_loss = train_one_epoch(model, device, train_loader, optimizer)
         val_loss = validate_one_epoch(model, device, val_loader)
         
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         
-        # Step the programmatic scheduler *every epoch*
+        # --- Step the scheduler (programmatically) ---
         scheduler.step()
         
         current_lr = optimizer.param_groups[0]['lr']
@@ -270,17 +310,18 @@ def main():
         # --- Log to CSV ---
         log_epoch(log_writer, epoch + 1, 'finetune', train_loss, val_loss, current_lr)
 
+        # Early stopping logic for fine-tuning
         if val_loss < best_val_loss_finetune:
             best_val_loss_finetune = val_loss
             torch.save(model.state_dict(), MODEL_SAVE_PATH_FINETUNE)
-            print(f"✅ New best *fine-tuned* model saved to {MODEL_SAVE_PATH_FINETUNE}")
+            print(f"✅ New best fine-tuned model saved to {MODEL_SAVE_PATH_FINETUNE}")
             early_stopping_counter = 0
         else:
             early_stopping_counter += 1
             print(f"Early stopping counter: {early_stopping_counter}/{EARLY_STOPPING_PATIENCE}")
 
         if early_stopping_counter >= EARLY_STOPPING_PATIENCE:
-            print("🛑 Early stopping triggered during fine-tuning.")
+            print(f"🛑 Early stopping triggered in fine-tuning.")
             break
 
     # --- Final Plotting ---
@@ -288,8 +329,11 @@ def main():
     fig = plt.figure(figsize=(12, 6)) # Get figure handle
     plt.plot(train_losses, label='Training Loss')
     plt.plot(val_losses, label='Validation Loss')
+    
     # Add a vertical line to show where fine-tuning started
-    plt.axvline(x=MAIN_EPOCHS, color='grey', linestyle='--', label=f'Fine-Tuning Start (Epoch {MAIN_EPOCHS})')
+    if len(train_losses) > MAIN_EPOCHS:
+        plt.axvline(x=MAIN_EPOCHS-1, color='gray', linestyle='--', label='Fine-Tuning Start')
+
     plt.title('Training and Validation Loss (Main + Fine-Tuning)')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
@@ -309,5 +353,4 @@ if __name__ == '__main__':
          print("Please download the Cornell Grasp Dataset and place it in the 'data' folder.")
     else:
         main()
-
 
