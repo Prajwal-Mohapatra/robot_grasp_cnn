@@ -178,42 +178,70 @@ class GraspDataset(Dataset):
             return rgbd_tensor, gt_maps
         except FileNotFoundError as e:
             print(f"Error loading files for index {idx}: {e}")
-            return None
+            # Returning None will cause the DataLoader to skip this sample if a custom collate_fn is used,
+            # but for now, it's better to let it fail to highlight missing data.
+            # A more robust implementation might return a dummy sample or skip.
+            # For simplicity, we'll re-raise or let it be handled by the caller.
+            # In this case, __getitem__ returning None is problematic for the default collate_fn.
+            # Let's try to return empty tensors if this happens, although this is not ideal.
+            # A better way is to filter self.grasp_files in __init__
+            print(f"Skipping index {idx} due to error: {e}")
+            # To avoid Dataloader crash, we must return something. 
+            # This is a bit of a hack; ideally, filter bad data in __init__.
+            # Let's just re-raise.
+            raise e
 
 if __name__ == '__main__':
     # Test the dataset loader
     print("\nTesting Dataset Loader...")
     # NOTE: You need to have the Cornell dataset in the specified path to run this test.
     data_dir = './data' # Assumes Cornell data is in ./data
-    if not os.path.exists(data_dir):
-        print(f"Warning: Data directory '{data_dir}' not found. Skipping dataset test.")
+    if not os.path.exists(data_dir) or not os.listdir(data_dir):
+        print(f"Warning: Data directory '{data_dir}' not found or is empty. Skipping dataset test.")
     else:
         try:
             dataset = GraspDataset(data_dir, augment=True)
             
-            # Get one sample
-            rgbd_tensor, gt_maps = dataset[0]
-            
-            print(f"Sample loaded successfully.")
-            print(f"RGB-D Tensor shape: {rgbd_tensor.shape}")
-            print("Ground Truth Maps:")
-            for name, tensor in gt_maps.items():
-                print(f"  - {name}: {tensor.shape}")
+            if len(dataset) > 0:
+                # Get one sample
+                rgbd_tensor, gt_maps = dataset[0]
                 
-            # Visualize the first sample's GT maps
-            import matplotlib.pyplot as plt
-            fig, axs = plt.subplots(1, 5, figsize=(20, 4))
-            axs[0].imshow(rgbd_tensor[:3].permute(1, 2, 0))
-            axs[0].set_title('RGB')
-            axs[1].imshow(gt_maps['q'].squeeze(), cmap='viridis')
-            axs[1].set_title('GT Quality')
-            axs[2].imshow(gt_maps['cos'].squeeze(), cmap='viridis')
-            axs[2].set_title('GT Cos(2θ)')
-            axs[3].imshow(gt_maps['sin'].squeeze(), cmap='viridis')
-            axs[3].set_title('GT Sin(2θ)')
-            axs[4].imshow(gt_maps['width'].squeeze(), cmap='viridis')
-            axs[4].set_title('GT Width')
-            plt.tight_layout()
-            plt.show()
+                print(f"Sample loaded successfully.")
+                print(f"RGB-D Tensor shape: {rgbd_tensor.shape}")
+                print("Ground Truth Maps:")
+                for name, tensor in gt_maps.items():
+                    print(f"  - {name}: {tensor.shape}")
+                    
+                # Visualize the first sample's GT maps
+                import matplotlib.pyplot as plt
+                fig, axs = plt.subplots(1, 5, figsize=(20, 4))
+                
+                # Normalize RGB for display
+                rgb_display = rgbd_tensor[:3].permute(1, 2, 0).numpy()
+                rgb_display = (rgb_display - rgb_display.min()) / (rgb_display.max() - rgb_display.min())
+                
+                axs[0].imshow(rgb_display)
+                axs[0].set_title('RGB')
+                axs[1].imshow(gt_maps['q'].squeeze(), cmap='viridis')
+                axs[1].set_title('GT Quality')
+                axs[2].imshow(gt_maps['cos'].squeeze(), cmap='viridis')
+                axs[2].set_title('GT Cos(2θ)')
+                axs[3].imshow(gt_maps['sin'].squeeze(), cmap='viridis')
+                axs[3].set_title('GT Sin(2θ)')
+                axs[4].imshow(gt_maps['width'].squeeze(), cmap='viridis')
+                axs[4].set_title('GT Width')
+                
+                for ax in axs:
+                    ax.axis('off')
+                    
+                plt.tight_layout()
+                plt.savefig('dataset_sample.png')
+                print("Saved dataset sample visualization to 'dataset_sample.png'")
+                # plt.show() # Disabling interactive show for this environment
+            else:
+                print("Dataset was loaded but contains 0 samples.")
+                
         except FileNotFoundError as e:
             print(e)
+        except Exception as e:
+            print(f"An error occurred during dataset test: {e}")
