@@ -1,4 +1,4 @@
-# **ACGR\_Convnet\_Finetuned: Grasp Detection Project**
+# **AC\_GRConvnet\_Main: Grasp Detection Project**
 
 This project implements an **AC-GRConvNet** (Attention Complementary Generative Residual Convolutional Network) for robotic grasp detection, finetuned on the Cornell Grasp Dataset.
 
