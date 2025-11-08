@@ -12,7 +12,7 @@ This project consists of the following Python scripts:
 * **dataset.py**: Contains the GraspDataset class for loading and augmenting the Cornell Grasp Dataset.  
 * **utils/data\_processing.py**: Provides utility functions for data processing, such as generate\_grasp\_maps\_gaussian to create ground-truth maps and normalization functions.  
 * **train.py**: The main script for training the model. It includes:  
-  * Data splitting (80/15/5 for train/val/test).  
+  * Data splitting (75/15/10 for train/val/test).  
   * A two-stage training process: main training and fine-tuning.  
   * LR schedulers with warmup and cosine annealing.  
   * Focal Loss for the quality map and weighted MSE for angle/width.  
