@@ -6,15 +6,19 @@ from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from shapely.geometry import Polygon
 from PIL import Image
+from scipy.ndimage import maximum_filter # --- FIX 5 (from PDF): Import for Top-K ---
 
 from model import AC_GRConvNet
 from dataset import GraspDataset
+# post_process_output is still used as a fallback
 from predict import post_process_output
 
 # --- Configuration ---
 EVAL_OUTPUT_DIR = './outputs/evaluation'
 DATA_DIR = './data'
+# --- FIX: Re-typing this line to remove any hidden characters ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# --- End of Fix ---
 
 # --- Paths for the two models to evaluate ---
 MODEL_PATH_MAIN = './outputs/models/ac_grconvnet_main_best.pth'
@@ -28,6 +32,7 @@ TEST_INDICES_PATH = os.path.join(SPLIT_DIR, 'test_indices.npy')
 IOU_THRESHOLD = 0.25
 ANGLE_THRESHOLD_DEG = 30.0
 ANGLE_THRESHOLD_RAD = np.deg2rad(ANGLE_THRESHOLD_DEG)
+EVAL_TOP_K = 5 # Evaluate the top 5 grasp predictions
 
 os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
 
@@ -59,6 +64,7 @@ def calculate_iou(poly1, poly2):
             return 0.0
         return intersection_area / union_area
     except Exception:
+        # Log invalid polygons if needed
         return 0.0
 
 def get_gt_grasp_params(gt_rect):
@@ -75,6 +81,11 @@ def get_gt_grasp_params(gt_rect):
     else:
         gt_angle = np.arctan2(edge2[1], edge2[0])
         gt_width = np.linalg.norm(edge1)
+    
+    # --- FIX 6 (from PDF): Normalize angle to [0, pi) ---
+    gt_angle = gt_angle % np.pi
+    # --- End of Fix ---
+    
     return gt_center[0], gt_center[1], gt_angle, gt_width
 
 def check_grasp_correctness(pred_grasp, gt_grasps):
@@ -82,6 +93,14 @@ def check_grasp_correctness(pred_grasp, gt_grasps):
     Checks if a predicted grasp is correct against a list of ground-truth grasps.
     """
     px, py, p_angle, p_width = pred_grasp
+    
+    # --- FIX 6 (from PDF): Normalize predicted angle for comparison ---
+    # p_angle is from arctan2/2, range [-pi/2, pi/2]
+    # Normalize to [0, pi) to match GT
+    p_angle_norm = p_angle % np.pi
+    # --- End of Fix ---
+    
+    # Use original p_angle for polygon creation
     pred_poly = grasp_to_polygon(px, py, p_angle, p_width, height=p_width/2)
 
     best_iou = 0.0
@@ -92,9 +111,15 @@ def check_grasp_correctness(pred_grasp, gt_grasps):
         if not gt_poly.is_valid:
             continue
             
-        gt_x, gt_y, gt_angle, gt_width = get_gt_grasp_params(gt_rect)
+        gt_x, gt_y, gt_angle, gt_width = get_gt_grasp_params(gt_rect) # gt_angle is [0, pi)
+        
         iou = calculate_iou(pred_poly, gt_poly)
-        angle_diff = abs((p_angle - gt_angle + np.pi/2) % np.pi - np.pi/2)
+        
+        # --- FIX 6 (from PDF): Robust angle difference calculation ---
+        # Compare two angles in [0, pi)
+        d = abs(p_angle_norm - gt_angle)
+        angle_diff = min(d, np.pi - d)
+        # --- End of Fix ---
         
         if iou > best_iou:
             best_iou = iou
@@ -109,8 +134,10 @@ def plot_results(accuracy, iou_scores, angle_errors, model_name):
     """
     Plots and saves the evaluation results for a specific model.
     """
-    correct_iou_scores = [iou for iou in iou_scores if iou > IOU_THRESHOLD]
-    correct_angle_errors = [err for err in angle_errors if err < ANGLE_THRESHOLD_DEG]
+    correct_iou_scores = [iou for iou, err in zip(iou_scores, angle_errors) 
+                          if iou > IOU_THRESHOLD and err < ANGLE_THRESHOLD_DEG]
+    correct_angle_errors = [err for iou, err in zip(iou_scores, angle_errors) 
+                            if iou > IOU_THRESHOLD and err < ANGLE_THRESHOLD_DEG]
     
     fig, axs = plt.subplots(1, 3, figsize=(18, 5))
     fig.suptitle(f'Grasp Evaluation Results - {model_name}', fontsize=16)
@@ -118,7 +145,7 @@ def plot_results(accuracy, iou_scores, angle_errors, model_name):
     # Accuracy Bar Chart
     axs[0].bar(['Accuracy'], [accuracy * 100], color='skyblue', width=0.5)
     axs[0].set_ylabel('Percentage (%)')
-    axs[0].set_title('Overall Grasp Accuracy')
+    axs[0].set_title(f'Overall Grasp Accuracy (Top-{EVAL_TOP_K})')
     axs[0].set_ylim(0, 100)
     axs[0].text(0, accuracy * 100, f'{accuracy*100:.2f}%', ha='center', va='bottom', fontsize=12, fontweight='bold')
 
@@ -168,12 +195,14 @@ def run_evaluation(model_path, model_name, test_loader, full_dataset, test_indic
 
     # Evaluation Loop
     correct_grasps = 0
+    total_grasps_processed = 0
     all_iou_scores = []
     all_angle_errors = []
+    MAX_GRASP_WIDTH = 150.0 # From data_processing
 
     with torch.no_grad():
         for i, (rgbd_tensor, gt_maps) in enumerate(tqdm(test_loader, desc=f"Evaluating {model_name}")):
-            if rgbd_tensor is None:
+            if rgbd_tensor is None or not rgbd_tensor.numel():
                 continue
             
             # Get model prediction
@@ -181,9 +210,6 @@ def run_evaluation(model_path, model_name, test_loader, full_dataset, test_indic
             pred_maps_np = pred_maps.squeeze().cpu().numpy()
             q_map, cos_map, sin_map, width_map = [m.squeeze() for m in np.split(pred_maps_np, 4)]
             
-            # Post-process to get the best predicted grasp
-            pred_grasp = post_process_output(q_map, cos_map, sin_map, width_map)
-
             # Get original ground truth rectangles
             sample_idx = test_indices[i]
             grasp_file = full_dataset.grasp_files[sample_idx]
@@ -193,12 +219,15 @@ def run_evaluation(model_path, model_name, test_loader, full_dataset, test_indic
                 continue
                 
             # Scale ground truth
-            try:
-                rgb_path = grasp_file.replace('cpos.txt', 'r.png')
-                with Image.open(rgb_path) as img:
-                    original_size = img.size
-            except FileNotFoundError:
-                original_size = (640, 480)
+            # --- FIX 4 (from PDF): Fix GT scaling fallback ---
+            rgb_path = grasp_file.replace('cpos.txt', 'r.png')
+            if not os.path.exists(rgb_path):
+                print(f"! WARNING: RGB file missing, skipping sample: {rgb_path}")
+                continue # Skip this sample instead of using wrong default size
+            
+            with Image.open(rgb_path) as img:
+                original_size = img.size
+            # --- End of Fix ---
             
             output_size = (224, 224)
             scale_x = output_size[1] / original_size[0]
@@ -211,29 +240,80 @@ def run_evaluation(model_path, model_name, test_loader, full_dataset, test_indic
                 scaled_rect[:, 1] *= scale_y
                 gt_rects_scaled.append(scaled_rect)
 
-            is_correct, iou, angle_err = check_grasp_correctness(pred_grasp, gt_rects_scaled)
+            # --- FIX 5 (from PDF): Implement Top-K Evaluation ---
             
-            if is_correct:
+            # 1. Find local maxima
+            # Use a filter size appropriate for the output resolution
+            local_maxima_mask = (q_map == maximum_filter(q_map, size=11))
+            
+            # 2. Get coordinates and values of these maxima
+            maxima_coords = np.argwhere(local_maxima_mask)
+            maxima_values = q_map[local_maxima_mask]
+            
+            # 3. Sort by quality and take top K
+            # [::-1] reverses to get highest first
+            top_k_indices = np.argsort(maxima_values)[-EVAL_TOP_K:][::-1]
+            top_k_coords = maxima_coords[top_k_indices]
+            
+            best_iou = 0.0
+            best_angle_err = 180.0
+            is_correct_for_sample = False
+
+            if len(top_k_coords) == 0:
+                # Fallback if no local maxima are found (unlikely)
+                pred_grasp = post_process_output(q_map, cos_map, sin_map, width_map)
+                is_correct_for_sample, best_iou, best_angle_err = check_grasp_correctness(pred_grasp, gt_rects_scaled)
+            else:
+                # 4. Test each of the Top-K grasps
+                for y, x in top_k_coords:
+                    # Get grasp parameters at this coord
+                    cos_val = cos_map[y, x]
+                    sin_val = sin_map[y, x]
+                    width_val = width_map[y, x]
+                    angle = np.arctan2(sin_val, cos_val) / 2.0
+                    width_pixels = width_val * MAX_GRASP_WIDTH
+                    
+                    pred_grasp = (x, y, angle, width_pixels)
+                    
+                    is_correct, iou, angle_err = check_grasp_correctness(pred_grasp, gt_rects_scaled)
+                    
+                    # Keep track of the best IOU/angle error from the Top-K
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_angle_err = angle_err
+                    
+                    # If any of the top-k is correct, mark the sample as correct and stop
+                    if is_correct:
+                        is_correct_for_sample = True
+                        best_iou = iou
+                        best_angle_err = angle_err
+                        break # Found a correct grasp, move to next sample
+
+            if is_correct_for_sample:
                 correct_grasps += 1
             
-            all_iou_scores.append(iou)
-            all_angle_errors.append(angle_err)
+            all_iou_scores.append(best_iou)
+            all_angle_errors.append(best_angle_err)
+            total_grasps_processed += 1
+            # --- End of Fix ---
             
     # Calculate and print final accuracy
-    total_grasps_processed = len(test_loader)
     accuracy = correct_grasps / total_grasps_processed if total_grasps_processed > 0 else 0.0
     print(f"\n--- Evaluation Complete for {model_name} ---")
     print(f"Total Grasps Evaluated: {total_grasps_processed}")
-    print(f"Correct Grasps: {correct_grasps}")
+    print(f"Correct Grasps (Top-{EVAL_TOP_K}): {correct_grasps}")
     print(f"Accuracy: {accuracy * 100:.2f}% (IoU > {IOU_THRESHOLD} & Angle Error < {ANGLE_THRESHOLD_DEG}°)")
     
     if all_iou_scores:
-        correct_iou = [iou for iou in all_iou_scores if iou > IOU_THRESHOLD]
-        correct_angle = [err for err in all_angle_errors if err < ANGLE_THRESHOLD_DEG]
-        if correct_iou:
-            print(f"Average IoU (for correct grasps): {np.mean(correct_iou):.3f}")
-        if correct_angle:
-            print(f"Average Angle Error (for correct grasps): {np.mean(correct_angle):.2f}°")
+        correct_iou_scores = [iou for iou, err in zip(all_iou_scores, all_angle_errors) 
+                              if iou > IOU_THRESHOLD and err < ANGLE_THRESHOLD_DEG]
+        correct_angle_errors = [err for iou, err in zip(all_iou_scores, all_angle_errors) 
+                                if iou > IOU_THRESHOLD and err < ANGLE_THRESHOLD_DEG]
+        
+        if correct_iou_scores:
+            print(f"Average IoU (for correct grasps): {np.mean(correct_iou_scores):.3f}")
+        if correct_angle_errors:
+            print(f"Average Angle Error (for correct grasps): {np.mean(correct_angle_errors):.2f}°")
     
     # Plot results
     plot_results(accuracy, all_iou_scores, all_angle_errors, model_name)
@@ -249,6 +329,7 @@ def main():
         return
         
     try:
+        # augment=False is correct for evaluation
         full_dataset = GraspDataset(DATA_DIR, augment=False)
         if len(full_dataset) == 0:
             print("Dataset is empty. Please check the data directory.")
@@ -284,4 +365,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
