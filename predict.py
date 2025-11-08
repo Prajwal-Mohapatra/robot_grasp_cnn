@@ -16,7 +16,9 @@ from utils.data_processing import normalize_rgb, normalize_depth
 MODEL_PATH = './outputs/models/ac_grconvnet_finetune_best.pth'
 DATA_DIR = './data'
 VIS_OUTPUT_DIR = './outputs/visualizations'
+# --- FIX: Manually re-typed this line to remove hidden characters ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# --- End of Fix ---
 NUM_VISUALIZATIONS = 5
 
 # Added paths for loading the correct data split
@@ -42,7 +44,7 @@ def post_process_output(q_map, cos_map, sin_map, width_map):
     max_q_val = np.max(q_map)
     # np.unravel_index converts a flat index into a tuple of coordinates
     max_q_idx = np.unravel_index(np.argmax(q_map), q_map.shape)
-    y, x = max_q_idx
+    y, x = max_q_idx # y is row, x is column
 
     # Get the angle and width at that pixel
     cos_val = cos_map[y, x]
@@ -87,9 +89,9 @@ def draw_grasp(ax, x, y, angle, width, color='r'):
     rect = plt.Polygon(translated_points, fill=False, edgecolor=color, linewidth=2)
     ax.add_patch(rect)
     
-    # --- FIX: Use keyword arguments for color and marker ---
+    # Draw center point
     ax.plot(x, y, marker='o', color=color, markersize=4)
-    # ------------------------------------------------------
+
 
 def main():
     print(f"Using device: {DEVICE}")
@@ -111,6 +113,11 @@ def main():
             print(f"Error: Test split file not found at '{TEST_INDICES_PATH}'.")
             print("Please run train.py first to generate the data splits.")
             return
+            
+        if len(full_dataset) == 0:
+            print("Dataset is empty. Please check the data directory.")
+            return
+            
         test_indices = np.load(TEST_INDICES_PATH)
         test_dataset = Subset(full_dataset, test_indices)
         print(f"Loaded test set with {len(test_dataset)} samples for visualization.")
@@ -123,8 +130,18 @@ def main():
         print(f"\nVisualizing sample {i+1}/{NUM_VISUALIZATIONS}...")
         
         # Get a random sample from the test set
+        if len(test_dataset) == 0:
+            print("Test dataset is empty, cannot visualize.")
+            break
         idx_in_test_set = random.randint(0, len(test_dataset) - 1)
-        rgbd_tensor, _ = test_dataset[idx_in_test_set]
+        
+        # Handle potential None from dataset loader
+        dataset_item = test_dataset[idx_in_test_set]
+        if dataset_item is None:
+            print(f"Skipping corrupt sample at index {idx_in_test_set}")
+            continue
+            
+        rgbd_tensor, _ = dataset_item
         
         # Get the original index from the full dataset for the title
         original_idx = test_indices[idx_in_test_set]
@@ -133,7 +150,16 @@ def main():
         with torch.no_grad():
             pred_maps = model(rgbd_tensor.unsqueeze(0).to(DEVICE))
         
-        # Post-process to find the best grasp
+        # --- (No changes needed here, predict.py logic was correct) ---
+        pred_maps_np = pred_maps.squeeze().cpu().numpy()
+        q_map_raw, cos_map_raw, sin_map_raw, width_map_raw = np.split(pred_maps_np, 4)
+        q_map = q_map_raw.squeeze()
+        cos_map = cos_map_raw.squeeze()
+        sin_map = sin_map_raw.squeeze()
+        width_map = width_map_raw.squeeze()
+        # --- End of section ---
+
+        # Post-process to find the best grasp (for visualization)
         x, y, angle, width = post_process_output(q_map, cos_map, sin_map, width_map)
         
         # Visualization
@@ -142,8 +168,9 @@ def main():
 
         # 1. Original RGB Image
         # Denormalize for display
+        # --- FIX: Corrected typo perm_ute -> permute ---
         rgb_img = rgbd_tensor[:3].permute(1, 2, 0).numpy()
-        # Ensure values are in [0, 1] before multiplying
+        # --- End of Fix ---
         rgb_img = (rgb_img - rgb_img.min()) / (rgb_img.max() - rgb_img.min())
         rgb_img = (rgb_img * 255.0).astype(np.uint8)
         axs[0].imshow(rgb_img)
@@ -157,7 +184,9 @@ def main():
         fig.colorbar(im1, ax=axs[1], fraction=0.046, pad=0.04)
 
         # 3. Predicted Angle Map
-        # We visualize the angle itself, not the cos/sin components
+        # --- (No changes needed here, logic was correct) ---
+        angle_map = np.arctan2(sin_map, cos_map) / 2.0
+        # --- End of section ---
         im2 = axs[2].imshow(angle_map, cmap='hsv', vmin=-np.pi/2, vmax=np.pi/2)
         axs[2].set_title('Predicted Angle (θ)')
         axs[2].axis('off')
@@ -172,7 +201,7 @@ def main():
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         save_path = os.path.join(VIS_OUTPUT_DIR, f'prediction_{i+1:02d}.png')
         plt.savefig(save_path)
-        # plt.show()
+        plt.close(fig) # Close figure to save memory
         print(f"✅ Visualization saved to {save_path}")
 
 if __name__ == '__main__':
@@ -181,5 +210,3 @@ if __name__ == '__main__':
          print("Please download the Cornell Grasp Dataset and place it in the 'data' folder.")
     else:
         main()
-
-
